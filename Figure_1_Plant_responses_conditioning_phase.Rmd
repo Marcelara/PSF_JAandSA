@@ -1,0 +1,531 @@
+---
+title: "Untitled"
+author: "Marcela Aragon"
+date: "2025-02-03"
+output: html_document
+---
+
+# General settings
+
+## Loading packages
+
+```{r loading packages, echo=TRUE}
+
+#Set working directory to project directory 
+setwd("./")
+getwd() #ok
+
+#data
+library(knitr)
+library(dplyr)
+library(tibble)
+
+#plotting
+library(ggplot2)
+library(RColorBrewer)
+library(grDevices)
+library(rempsyc) #tables
+
+#stats
+library(DHARMa)
+library(lmtest)
+library(fitdistrplus)
+library(AICcmodavg)
+library(emmeans)
+library(multcompView)
+library(multcomp)
+library(postHoc)
+library(car)
+library(lsr)
+
+```
+
+## Global settings for plots 
+
+```{r settings for plots}
+
+# Setting up white background for plots
+theme_set(theme_bw())
+
+# Set colors for soil_inocula
+color_pathway_induced <- c("#989898", "#E69F00", "#009D64") #control, JA and SA
+color_experiment <- c("#336699", "#996633") #phytohormone-treated and herbivore-infested
+
+# Set default axis looks
+axis_looks <- theme(axis.text.x = element_text(colour = "black", size = 9,
+                                               face = "bold", angle=0, hjust=0.5))+ #text in X
+  theme(axis.text.y = element_text(colour = "black", size = 9, face = "bold"))+ #text in y
+  theme(axis.title=element_text(size=11, face = "bold"))+ #all texts
+  theme(axis.title.y = element_text(margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0)))+
+  theme(panel.grid.major = element_blank(), #no grid
+        panel.grid.minor = element_blank()) #no grid
+  #theme(legend.position="none")+ #no legend
+
+#Get names for boxes in facet wrap
+Experiment_names <- c(
+                    `simulated` = "Phytohormone-treated",
+                    `real_insects` = "Herbivore-infested")
+
+```
+
+
+
+# (a)Shoot biomass in conditioning phase 
+
+## Data
+Load and fix biomass data for conditioning phase
+```{r shoot_biomass conditioning data}
+
+#load data
+biomass <- readRDS("./Data/plant_data/biomass.rds")
+
+#quick summary
+biomass %>% 
+group_by(Phase, Experiment, plant_pathway_induced) %>%
+  summarise(
+    count = n(),
+    mean = mean(shoot_biomass_mg, na.rm = TRUE),
+    sd = sd(shoot_biomass_mg, na.rm = TRUE))
+
+
+#subsetting df to only conditioning
+conditioning <- biomass %>% 
+                filter(Phase == "conditioning")
+
+
+#change levels of Experiment; simulated=phytohormone-treated, real_insects=herbivore-infested
+levels(conditioning$Experiment)
+conditioning <- conditioning %>%
+                mutate(Experiment = factor(Experiment, levels = c("simulated", "real_insects" )))
+
+```
+
+## Plot
+Plot it
+```{r shoot_biomass conditioning plot}
+
+# make a boxplot
+p1 <- ggplot(data = conditioning,
+            mapping = aes(x = plant_pathway_induced, y = shoot_biomass_mg), colour= plant_pathway_induced)+
+  geom_boxplot(mapping = aes(fill= plant_pathway_induced), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = conditioning,
+              mapping = (aes(plant_pathway_induced, shoot_biomass_mg, fill = plant_pathway_induced)),
+              shape = 21, size = 1.8, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)
+
+#facet_wrap it by experiment and add info
+p2 <- p1 + facet_wrap(~Experiment, labeller = as_labeller(Experiment_names)) +
+              labs(y="Shoot biomass (mg)", x=" ") +
+              ylim(400,2500)+
+              axis_looks +
+              theme(axis.text.x = element_blank(),
+                    axis.ticks.x = element_blank())+
+              theme(strip.text.x = element_text(size = 11, face = "bold"), #text in boxes
+                    strip.background=element_rect(colour="black"))+ #outline of boxes
+              theme(panel.spacing = unit(0.2, "lines"))+ #space in between facets
+              theme(legend.position="none") #no legend, to save it better
+#check plot
+p2
+
+
+```
+
+## Stats
+Run stats split by experiment, first phytohormone-treated
+```{r shoot_biomass conditioning stats, phytohormone-treated}
+
+#subset to phyto
+phyto <- subset(conditioning, Experiment == "simulated") %>% droplevels()
+
+#quick summary
+phyto %>% group_by(Experiment, plant_pathway_induced) %>% summarise(n=n()) #balanced
+
+#run glm with normal distribution
+aov_simulated <- glm(shoot_biomass_mg  ~ plant_pathway_induced,
+                     family=gaussian,
+                     data=phyto)
+#get summary
+lm.anova <- car::Anova(aov_simulated, type="III", test.statistic="LR")
+
+#check model assumptions
+simulateResiduals(aov_simulated, plot=T) #ok
+
+#post-hoc test
+#pairiwse differences
+emmeans(aov_simulated, pairwise~plant_pathway_induced) 
+
+```
+
+
+```{r shoot_biomass conditioning stats, herbivore-infested}
+
+#subset to phyto
+herb <- subset(conditioning, Experiment == "real_insects") %>% droplevels()
+
+#quick summary
+herb %>% group_by(Experiment, plant_pathway_induced) %>% summarise(n=n()) #balanced
+
+#run glm with normal distribution
+aov_insects <- glm(shoot_biomass_mg  ~ plant_pathway_induced,
+                     family=gaussian,
+                     data=herb)
+#get summary
+lm.anova.i <- car::Anova(aov_insects, type="III", test.statistic="LR")
+
+#check model assumptions
+simulateResiduals(aov_insects, plot=T) #ok
+
+#post-hoc test
+#pairiwse differences
+emmeans(aov_insects, pairwise~plant_pathway_induced) 
+
+```
+
+# (b)PLS-DA endogenous phytohormones
+
+Stands for Partial Least Squares Discriminant Analysis; a type of multivariate dimensionality reduction analysis. It can be thought as a "supervised" version of a PCA. The general approach is to analyze all phytohormones in a single analysis to check for patterns.  
+
+https://omicsforum.ca/t/what-is-the-meaning-of-components-in-pls-da/732/3
+
+## Data
+```{r PLS-DA phytohormones conditioning data}
+
+#load data
+phytohormones <- readRDS("./Data/plant_data/phytohormones.rds")
+
+#change levels of Experiment
+phyto <- phytohormones %>%
+                mutate(Experiment = factor(Experiment,
+                                           levels = c("simulated", "real_insects" )))%>%
+                mutate(plant_pathway_induced = factor(plant_pathway_induced,
+                                                      levels=c("Control", "JA", "SA")))
+
+#subsetting df to only conditioning
+conditioning <- phytohormones %>% 
+                      filter(Phase == "conditioning")
+
+#make long format for plotting
+long <- phyto %>% 
+              tidyr::pivot_longer(cols = c(11:18), 
+              names_to = "phytohormone",
+              values_to = "concentration",
+              values_drop_na = TRUE)
+
+#making new phytohormone column as factor
+long$phytohormone <- as.factor(phyto_long$phytohormone)
+
+# Reordering downstream the JA pathway
+ordered_hormones <- c("ABA", "SA", "cis_OPDA", "JA", "OH_JA", "sum_JA_Ile", "OH_JA_Ile", "COOH_JA_Ile")
+
+long$phytohormone <-factor(long$phytohormone, 
+                             levels = ordered_hormones)
+
+#subsetting df to only conditioning
+conditioning_long <- long %>% 
+                filter(Phase == "conditioning")
+
+#Now I have 3 df, phyto, long and conditioning 
+
+```
+
+Now let's calculate the PLS-DA
+```{r PLS-DA phytohormones conditioning data2}
+#Some of the following code was written by Els van de Zande, thank you Els!
+
+#load libraries
+library(ropls) #PLS-DA
+library(mixOmics) #PLS-DA
+
+#get matrix
+matrixdata<-conditioning[,11:18]# keep only values
+matrixdata <- as.matrix(matrixdata[,])# make it numeric
+metadata<-conditioning[,c("Experiment", "plant_pathway_induced")]
+metadata <- metadata %>% mutate(joined=paste(Experiment, plant_pathway_induced, sep="_"))
+metadata <- factor(metadata$joined)
+
+#PLS-DA 
+plsda <-opls(matrixdata, metadata, scaleC = "pareto", permI = 100)
+#pareto removes the relative importance of large values
+#but keeps the data structure intact.
+
+#get summary
+plot(plsda, typeVc = "x-score", parCexN = 1.5)
+vip_scores <- getVipVn(plsda)
+
+#let's remove those with VIP < 0.75
+low_vip <- which(vip_scores < 0.75)
+filtered_matrixdata <- matrixdata[,-low_vip]
+
+#re-run PLSDA, good one
+plsda_filt <-opls(filtered_matrixdata, metadata, scaleC = "pareto", permI = 100)
+plot(plsda_filt)
+
+#get scores
+scores<-plsda_filt@scoreMN
+scores_df<-as.data.frame(scores) #make new df 
+
+scores_df$p1 <- as.numeric(scores_df$p1)
+scores_df$p2 <- as.numeric(scores_df$p2)
+
+metadata<-conditioning[,c("Experiment", "plant_pathway_induced")]
+
+scores_df2 <- scores_df %>% #add info
+              mutate(Experiment = as.numeric(metadata$Experiment))%>%
+              mutate(plant_pathway_induced = as.numeric(metadata$plant_pathway_induced))
+```
+
+## Plot
+Now make the bi-plot with scores and loadings
+```{r PLS-DA phytohormones conditioning plot}
+
+#Plot the scores using ggplot2
+scoreplot<-ggplot(scores_df2, aes(x = p1, y = p2, fill = factor(plant_pathway_induced),
+                                  shape = factor(Experiment))) +
+  geom_point(aes(colour=factor(plant_pathway_induced), fill=factor(plant_pathway_induced)),
+              size = 4, alpha=0.8)+
+  labs(x = "t1(69%)", y = "t2(17%)",
+       color="Plant pathway induced", shape="Experiment", fill=element_blank()) +
+  scale_fill_manual(values =color_pathway_induced) +  #Customize color scheme for Treatment
+  scale_color_manual(values =color_pathway_induced)
+  scale_shape_manual(values = c(16,17)) +  #Customize shape for Herbivore
+  axis_looks
+
+#now add loadings
+loadings<-plsda_filt@loadingMN
+loadings_df<-as.data.frame(loadings)
+
+loadings_df$p1 <- as.numeric(loadings_df$p1)
+loadings_df$p2 <- as.numeric(loadings_df$p2)
+
+#makes plot with arrows marking direction
+hormone_names <- c("SA","JA","ABA","cis-OPDA","OH-JA")
+
+Biplot <-scoreplot+
+         geom_hline(yintercept=0, linetype='dotted', col = 'gray20',linewidth = 0.2 )+
+         geom_vline(xintercept=0, linetype='dotted', col = 'gray20', linewidth = 0.2)+
+         geom_segment(data = loadings_df, aes(x = 0, y = 0, xend = (p1*50), yend = (p2*50)),
+                      arrow = arrow(length = unit(0.5, "picas"), type="closed"),
+                      colour = "black", linewidth = 0.5, inherit.aes = FALSE)+
+         geom_text(aes(x = (p1*50), y = (p2*50), label = hormone_names,
+                angle = 0.45, hjust = -.1, vjust = .2),
+                 data = loadings_df,
+                 colour = "black", size=4, inherit.aes = FALSE)+
+        axis_looks
+
+Biplot
+
+```
+
+## Stats
+Analyze the data with PERMANOVA. First, data is auto-scaled to calculate a distance matrix from which a PERMANOVA is run to see whether there is an effect of plant pathway induced, the type of induction and the interaction of these two factors
+```{r PLS-DA phytohormones conditioning stats}
+
+library(vegan)
+
+#PERMANOVA
+UVmatrixdata<- santaR:::scaling_UV(filtered_matrixdata) #for auto-scaling using st. deviation
+DistanceMatrix<-dist(UVmatrixdata, method="euclidean")
+
+#make it a df again
+MetaData <-as.data.frame(metadata) 
+MetaData[,c(1:2)]<- lapply(MetaData[,c(1:2)], as.factor)
+
+#run PERMANOVA
+permanova <- adonis2(DistanceMatrix~Experiment*plant_pathway_induced,
+                      data=MetaData, permutations = 999)
+
+#check results
+permanova
+
+```
+
+# (c)GLS content in conditioning phase 
+##Data
+```{r GLS conditioning data}
+
+#load data
+gluco <- readRDS("./Data/plant_data/glucosinolates.rds")
+
+#change levels of Experiment; simulated=phytohormone-treated and real_insects=herbivore-infested.
+levels(gluco$Experiment)
+gluco <- gluco %>%
+                mutate(Experiment = factor(Experiment,
+                                           levels = c("simulated", "real_insects" )))%>%
+                mutate(plant_pathway_induced = factor(plant_pathway_induced,
+                                                      levels=c("Control", "JA", "SA")))
+#remove sample
+gluco <-gluco %>%
+        subset(ID != "159")%>% #dry sample, no info
+        droplevels()
+
+#### classify by Indolic or Aliphatic ####
+indolic <- c("Glu_4OHI3M", "Glu_I3M", "Glu_1MOI3M", "Glu_4MOI3M") 
+aliphatic <- c("Glu_Allyl", "Glu_3MSOP","Glu_4MSOB")
+#make a small df
+values <- c(indolic, aliphatic)
+#Create a vector of names, repeating the vector names accordingly
+names <- c(rep("indolic", length(indolic)), rep("aliphatic", length(aliphatic)))
+# Create the data frame
+key_glucosinolates <- data.frame(type = names, glucosinolate = values)
+#clean
+rm(values,names)
+#### ####
+
+#order it
+gluco <- gluco %>%
+          relocate(Glu_Allyl,Glu_3MSOP,Glu_4MSOB, .after=weight_mg) %>% 
+          relocate(Glu_4OHI3M,Glu_I3M,Glu_1MOI3M, Glu_4MOI3M, .after=Glu_4MSOB)%>% 
+          mutate(Glu_alyphatic=rowSums(.[11:13]))%>%
+          mutate(Glu_indolic=rowSums(.[14:17]))
+
+
+#make long format for plotting
+long <- gluco %>% 
+              tidyr::pivot_longer(cols = c(11:20), 
+              names_to = "glucosinolate",
+              values_to = "concentration",
+              values_drop_na = TRUE)
+
+#making new glucosinolate column as factor
+long$glucosinolate <- as.factor(long$glucosinolate)
+
+#subsetting df to only conditioning
+conditioning_long <- long %>% 
+                filter(Phase == "conditioning")%>%
+                filter(glucosinolate != "Glu_4OHI3M") #mostly 0's, remove from analysis 
+
+conditioning_gluco <- gluco %>%
+                      dplyr::filter(Phase == "conditioning")%>%
+                      dplyr::select(-ends_with('4OHI3M'))#mostly 0's, remove from analysis
+
+#first filter by aliphatic and indolic glucosinolates
+long_cond <- conditioning_long %>% filter(
+  glucosinolate %in% c("Glu_alyphatic","Glu_indolic")&
+    Phase == "conditioning")
+
+#Now make a summary df
+df_GLS_p <- long_cond %>% 
+            group_by(Experiment, plant_pathway_induced, glucosinolate) %>%
+  summarise(
+    n = n(),
+    mean = mean(concentration, na.rm = TRUE),
+    sd = sd(concentration, na.rm = TRUE)) %>%
+    mutate(se = sd/sqrt(n))
+
+#Now I have 3 df, gluco, conditioning_long and conditioning_gluco 
+
+```
+
+##Plot
+```{r GLS conditioning plot}
+
+#Finally, plot it
+p3 <- ggplot(data = df_GLS_p,
+       mapping = aes(x = glucosinolate, y = mean), colour= plant_pathway_induced)+
+  geom_bar(aes(fill = plant_pathway_induced), stat = "identity",
+           position = position_dodge(0.8), width = 0.7, color = "black")+
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se, group = plant_pathway_induced),
+                width = 0.2, position = position_dodge(0.8))+
+  geom_jitter(data = long_cond,
+              mapping = (aes(glucosinolate, concentration,
+                             fill = plant_pathway_induced)),
+              shape = 21, size = 1.5, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  facet_wrap(~Experiment)
+
+#check it
+p3
+
+```
+
+##Stats
+Let's analyze it independently by experiment and GLS
+```{r GLS conditioning stats; Phythormone-treated}
+
+#Phytohormone-treated
+## Aliphatic 
+phyto.a <- subset(long_cond, Experiment == "simulated" & glucosinolate == "Glu_alyphatic")
+
+phyto.a %>% group_by(Experiment, plant_pathway_induced) %>% summarise(n=n()) #balanced N=4
+
+#run glm
+lm <- glm(log(concentration) ~ plant_pathway_induced,
+          family=gaussian,
+          data=phyto.a)
+
+#get summary 
+lm_table <- car::Anova(lm, type="II", test.statistic="LR") #no effect of stress treatment
+
+#check model assumptions
+simulateResiduals(lm, plot=T) #ok
+
+##Indole
+phyto.i <- subset(long_cond, Experiment == "simulated" & glucosinolate == "Glu_indolic")
+
+phyto.i %>% group_by(Experiment, plant_pathway_induced) %>% summarise(n=n()) #balanced N=4
+
+#run glm
+lm <- glm(log(concentration) ~ plant_pathway_induced,
+          family=gaussian,
+          data=phyto.i)
+
+#get summary 
+lm_table <- car::Anova(lm, type="II", test.statistic="LR") #sig effect of stress treatment
+
+#check model assumptions
+simulateResiduals(lm, plot=T) #ok
+
+#post-hoc
+#emmeans
+emmeans <- emmeans(lm, pairwise~plant_pathway_induced)
+cld(emmeans, Letters="letters", adjust="tukey")
+
+```
+
+```{r GLS conditioning stats; Herbivore-infested}
+
+#Herbivore-infested
+##Aliphatic 
+insects.a <- subset(long_cond, Experiment == "real_insects" & glucosinolate == "Glu_alyphatic")
+insects.a %>% group_by(plant_pathway_induced) %>% summarise(n=n()) 
+
+#run glm
+lm <- glm(log(concentration) ~ plant_pathway_induced,
+          family=gaussian,
+         data=insects.a)
+
+#summary
+lm_table <- car::Anova(lm, type="III", test.statistic="LR")
+
+#check model assumptions
+simulateResiduals(lm, plot=T)
+
+#post-hoc
+#emmeans
+emmeans <- emmeans(lm, pairwise~plant_pathway_induced)
+cld(emmeans, Letters="letters", adjust="tukey")
+
+##Indole
+insects.i <- subset(long_cond, Experiment == "real_insects" & glucosinolate == "Glu_indolic")
+insects.i %>% group_by(plant_pathway_induced) %>% summarise(n=n()) 
+
+#run glm
+lm <- glm(log(concentration) ~ plant_pathway_induced,
+          family=gaussian,
+         data=insects.i)
+
+#summary
+lm_table <- car::Anova(lm, type="III", test.statistic="LR")
+
+#check model assumptions
+simulateResiduals(lm, plot=T)
+
+#post-hoc
+#emmeans
+emmeans <- emmeans(lm, pairwise~plant_pathway_induced)
+cld(emmeans, Letters="letters", adjust="tukey")
+
+```
