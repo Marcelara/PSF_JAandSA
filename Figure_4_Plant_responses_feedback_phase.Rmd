@@ -1,0 +1,631 @@
+---
+title: "Figure 4: Plant responses in feedback phase"
+author: "Marcela Aragon"
+date: "2025-02-03"
+output: html_document
+---
+
+# General settings
+
+## Loading packages
+
+```{r loading packages}
+
+#Set working directory to project directory 
+setwd("./")
+getwd() #ok
+
+#data
+library(knitr)
+library(dplyr)
+library(tibble)
+library(forcats)
+
+#plotting
+library(ggplot2)
+library(RColorBrewer)
+library(grDevices)
+library(rempsyc) #tables
+
+#stats
+library(DHARMa)
+library(lmtest)
+library(fitdistrplus)
+library(AICcmodavg)
+library(emmeans)
+library(multcompView)
+library(multcomp)
+library(postHoc)
+library(car)
+library(lsr)
+library(ropls) #PLS-DA
+library(mixOmics) #PLS-DA
+library(vegan) #PERMANOVA
+
+```
+
+## Global settings for plots 
+
+```{r settings for plots}
+
+# Setting up white background for plots
+theme_set(theme_bw())
+
+# Set colors for soil_inocula
+color_pathway_induced <- c("#989898", "#E69F00", "#009D64") #control, JA and SA
+color_experiment <- c("#336699", "#996633") #phytohormone-treated and herbivore-infested
+
+# Set default axis looks
+axis_looks <- theme(axis.text.x = element_text(colour = "black", size = 9,
+                                               face = "bold", angle=0, hjust=0.5))+ #text in X
+  theme(axis.text.y = element_text(colour = "black", size = 9, face = "bold"))+ #text in y
+  theme(axis.title=element_text(size=11, face = "bold"))+ #all texts
+  theme(axis.title.y = element_text(margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0)))+
+  theme(panel.grid.major = element_blank(), #no grid
+        panel.grid.minor = element_blank()) #no grid
+  #theme(legend.position="none")+ #no legend
+
+#Get names for boxes in facet wrap
+Experiment_names <- c(
+                    `simulated` = "Phytohormone-treated",
+                    `real_insects` = "Herbivore-infested")
+
+```
+
+# (a)Shoot biomass in feedback phase 
+
+## Data
+Load and fix biomass data for feedback phase
+
+```{r shoot_biomass feedback; data}
+
+#load data
+biomass <- readRDS("./Data/plant_data/biomass.rds")
+
+#subsetting df to only feedback
+feedback <- biomass %>% 
+                filter(Phase == "feedback")
+
+
+#change levels of Experiment & Herbivory
+levels(feedback$Experiment)
+levels(feedback$herbivory)
+levels(feedback$soil_inocula)
+
+feedback <- feedback %>%
+                mutate(Experiment = factor(Experiment, levels = c("simulated", "real_insects" )))%>%
+                mutate(herbivory = factor(herbivory, levels = c("Without", "Chewer", "Aphid")))
+
+feedback <- feedback %>%
+                mutate(herbivory = factor(herbivory, labels = c("uninfested", "Mamestra", "Myzus")))%>%
+                filter(!is.na(shoot_biomass_mg))%>% #remove NAs
+                droplevels()
+
+#finally, delete not informative columns
+feedback <- feedback %>% dplyr::select(-Phase, -plant_pathway_induced, -Stress, -Leaf_area)
+
+```
+
+##Plot
+
+```{r shoot_biomass feedback; plot}
+
+# make a boxplot for phytohormone-treated experiment
+biomass_p <- ggplot(data = subset(feedback, Experiment == "simulated"),
+       mapping = aes(x = soil_inocula, y = shoot_biomass_mg), colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(feedback, Experiment == "simulated"),
+              mapping = (aes(soil_inocula, shoot_biomass_mg, fill = soil_inocula)),
+              shape = 21, size = 1.8, alpha=0.9, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(100,2000)+
+  theme(legend.position="none")+
+  facet_wrap(~herbivory)+
+  theme(panel.spacing = unit(0, "lines"))
+
+#make a boxpot for insect-infested experiment
+biomass_i <- ggplot(data = subset(feedback, Experiment == "real_insects"),
+       mapping = aes(x = soil_inocula, y = shoot_biomass_mg), colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(feedback, Experiment == "real_insects"),
+              mapping = (aes(soil_inocula, shoot_biomass_mg, fill = soil_inocula)),
+              shape = 21, size = 1.8, alpha=0.9,color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(100,2000)+
+  theme(legend.position="none")+
+  facet_wrap(~herbivory)+
+  theme(panel.spacing = unit(0, "lines"))
+
+
+# Combine the two plots
+library(patchwork)
+combined_plot <- biomass_p + biomass_i
+
+#check
+combined_plot
+
+```
+
+
+##Stats
+```{r shoot_biomass feedback; stats}
+
+#---- Phytohormone-treated ----
+phyto <- subset(feedback, Experiment == "simulated")
+
+#quick summary
+phyto %>% group_by(Experiment, soil_inocula, herbivory) %>% summarise(n=n()) #not balanced
+
+#run glm with interaction
+lm <- glm(shoot_biomass_mg ~ soil_inocula*herbivory,
+          family=gaussian,
+          data=phyto)
+
+#get summary 
+lm.anova <- car::Anova(lm, type="III", test.statistic="LR") #no effect of either
+
+#check assumptions
+simulateResiduals(lm, plot=T) #ok
+
+#---- Insect-infested ----
+insects <- subset(feedback, Experiment == "real_insects")
+insects %>% group_by(Experiment, soil_inocula, herbivory) %>% summarise(n=n()) #balanced
+
+#run glm with interaction
+lm.i <- glm(shoot_biomass_mg ~ soil_inocula*herbivory,
+            family=gaussian,
+            data=insects)
+
+#get summary
+lm.i.anova <- car::Anova(lm.i, type="II", test.statistic="LR") #marginal but not sig effect of herbivory
+
+#check assumptions
+simulateResiduals(lm.i, plot=T) #ok
+
+```
+
+#(b)PLS-DA endogenous phytohormones
+##Data
+```{r PLS-DA phytohormones feedback; data}
+
+#load data
+phytohormones <- readRDS("./Data/plant_data/phytohormones.rds")
+
+#change levels of Experiment
+phyto <- phytohormones %>%
+                mutate(Experiment = factor(Experiment,
+                                           levels = c("simulated", "real_insects" )))%>%
+                mutate(plant_pathway_induced = factor(plant_pathway_induced,
+                                                      levels=c("Control", "JA", "SA")))
+
+#make long format for plotting
+long <- phyto %>% 
+              tidyr::pivot_longer(cols = c(11:18), 
+              names_to = "phytohormone",
+              values_to = "concentration",
+              values_drop_na = TRUE)
+
+#making new phytohormone column as factor
+long$phytohormone <- as.factor(phyto_long$phytohormone)
+
+# Reordering downstream the JA pathway
+ordered_hormones <- c("ABA", "SA", "cis_OPDA", "JA", "OH_JA", "sum_JA_Ile", "OH_JA_Ile", "COOH_JA_Ile")
+long$phytohormone <-factor(long$phytohormone, 
+                             levels = ordered_hormones)
+
+#subsetting df to only feedback
+feedback <- phytohormones %>% 
+                      filter(Phase == "feedback")
+
+#removing samples with NA values 
+feedback <- feedback %>% 
+            subset(ID != 140 & ID!= 146 & ID!= 159 & ID!= 163 & ID!= 208 & ID!= 215
+                       & ID!= 220 & ID!= 222 & ID!= 224)%>% #removing those  with NA values
+                droplevels()
+
+#subset long df to only feedback
+feedback_long <- long %>% 
+                filter(Phase == "feedback")%>%
+                subset(ID != 140 & ID!= 146 & ID!= 159 & ID!= 163 & ID!= 208 & ID!= 215
+                       & ID!= 220 & ID!= 222 & ID!= 224)%>%
+                droplevels()
+
+#change names of soil_inocula (soil treatment)
+levels(feedback$soil_inocula)
+feedback <- feedback  %>%
+            mutate(soil_inocula=factor(soil_inocula, labels=c("control_inocula", 
+                                                              "JA_inocula",
+                                                              "SA_inocula")))
+levels(feedback_long$soil_inocula)
+feedback_long <- feedback_long  %>%
+                  mutate(soil_inocula=factor(soil_inocula, labels=c("control_inocula", 
+                                                              "JA_inocula",
+                                                              "SA_inocula")))
+#change names of herbivory
+levels(feedback$herbivory)
+feedback <- feedback  %>%
+            mutate(herbivory=factor(herbivory, levels=c("without", "caterpillar", "aphid")))
+
+feedback <- feedback  %>%
+            mutate(herbivory=factor(herbivory,
+                                    labels=c("uninfested", "Mamestra", "Myzus")))
+
+levels(feedback_long$herbivory)
+feedback_long <- feedback_long  %>%
+                  mutate(herbivory=factor(herbivory, levels=c("without", "caterpillar", "aphid")))
+
+feedback_long <- feedback_long  %>%
+                mutate(herbivory=factor(herbivory,
+                                    labels=c("uninfested", "Mamestra", "Myzus")))
+
+#I have feedback and feedback_long df's now
+
+```
+
+Now let's calculate the PLS-DA
+```{r PLS-DA phytohormones feedback; data PLSDA}
+
+#Some of the following code was written by Els van de Zande, thank you Els!
+
+#get matrix
+matrixdata<-feedback[,11:18]# keep only values
+matrixdata <- as.matrix(matrixdata[,])# make it numeric
+metadata <-feedback[,c("Experiment", "soil_inocula", "herbivory")]
+#metadata <- metadata %>% mutate(joined=paste(Experiment, herbivory, sep="_"))
+metadata <- factor(metadata$herbivory) #using only herbivory as explanatory variable
+
+#PLS-DA 
+plsda <-opls(matrixdata, metadata, scaleC = "pareto", permI = 100) #herbivory alone is a much better predictor 
+#pareto removes the relative importance of large values
+#but keeps the data structure intact.
+
+#get summary
+plot(plsda, typeVc = "x-score", parCexN = 1.5)
+vip_scores <- getVipVn(plsda)
+
+#let's remove those with VIP < 0.75
+low_vip <- which(vip_scores < 0.75)
+filtered_matrixdata <- matrixdata[,-low_vip]
+
+#re-run PLSDA
+plsda_filt <-opls(filtered_matrixdata, metadata, scaleC = "pareto", permI = 100)
+plot(plsda_filt)
+
+#get scores
+scores<-plsda_filt@scoreMN
+scores_df<-as.data.frame(scores) #make new df 
+
+scores_df$p1 <- as.numeric(scores_df$p1)
+scores_df$p2 <- as.numeric(scores_df$p2)
+
+metadata<-feedback[,c("Experiment", "soil_inocula", "herbivory")]
+
+scores_df2 <- scores_df %>% #add info
+              mutate(Experiment = as.factor(metadata$Experiment))%>%
+              mutate(soil_inocula = as.factor(metadata$soil_inocula))%>%
+              mutate(herbivory=as.factor(metadata$herbivory))
+```
+
+##Plot
+Now make the bi-plot with scores and loadings
+```{r PLS-DA phytohormones feedback; plot}
+
+str(scores_df2) #ok
+ggpubr::show_point_shapes() #check
+
+#plot
+scoreplot<-ggplot(scores_df2, aes(x = p1, y = p2,
+                                  fill=herbivory,#inside
+                                  shape=soil_inocula, #shape
+                                  color=Experiment))+ #outline
+  geom_point(size = 4, stroke=0.5, alpha=0.8,
+             aes(color=Experiment, fill=herbivory))+
+  scale_shape_manual(values=c(21,22,24))+
+  scale_color_manual(values = c("black", "white"))+ #outline
+  scale_fill_manual(values=color_pathway_induced)+ #inside
+  labs(x = "LV1 (60%)", y = "LV2 (21%)",
+  color="Experiment", shape="herbivory", fill="Soil inocula")+
+  axis_looks
+
+#now add loadings
+loadings<-plsda_filt@loadingMN
+loadings_df<-as.data.frame(loadings)
+
+loadings_df$p1 <- as.numeric(loadings_df$p1)
+loadings_df$p2 <- as.numeric(loadings_df$p2)
+
+#makes plot with arrows marking direction
+hormone_names <- c("SA","JA","cis-OPDA","OH-JA")
+
+#make biplot
+Biplot <-scoreplot+
+         geom_hline(yintercept=0, linetype='dotted', col = 'gray20',linewidth = 0.2 )+
+         geom_vline(xintercept=0, linetype='dotted', col = 'gray20', linewidth = 0.2)+
+         geom_segment(data = loadings_df, aes(x = 0, y = 0, xend = (p1*70), yend = (p2*70)),
+                      arrow = arrow(length = unit(0.5, "picas"), type="closed"),
+                      colour = "black", linewidth = 0.5, inherit.aes = FALSE)+
+         geom_text(aes(x = (p1*70), y = (p2*70), label = hormone_names,
+                angle = 0.45, hjust = -.1, vjust = .2),
+                 data = loadings_df,
+                 colour = "black", size=4, inherit.aes = FALSE)+
+        axis_looks
+
+#check
+Biplot #legend is wrong, plot is ok
+
+```
+
+##Stats
+Now, let's analyze the data with a PERMANOVA. First, data is auto-scaled to calculate a distance matrix from which a PERMANOVA is run to see whether there is an effect of plant pathway induced, the type of induction and the interaction of these two factors. 
+
+```{r PLS-DA phytohormones conditioning stats}
+
+#PERMANOVA
+UVmatrixdata<- santaR:::scaling_UV(filtered_matrixdata) #for auto-scaling using st. deviation
+DistanceMatrix<-dist(UVmatrixdata, method="euclidean")
+
+#make it a df again
+MetaData <-as.data.frame(metadata) 
+MetaData[,c(1:3)]<- lapply(MetaData[,c(1:3)], as.factor)
+
+#run PERMANOVA
+permanova <- adonis2(DistanceMatrix~Experiment+soil_inocula+herbivory,
+                      data=MetaData, permutations = 999) 
+
+#removed interactions as it makes it more difficult to interpret biologically, and R2 values from interactions are very small.
+
+```
+
+#(c)Caterpillar weight
+##Data
+```{r}
+
+#load data
+caterpillars <- readRDS("./Data/plant_data/caterpillars.rds")
+
+#check levels
+levels(caterpillars$Experiment) #ok
+levels(caterpillars$soil_inocula) #ok
+
+#make it long
+cat_long <- caterpillars %>% 
+               tidyr::pivot_longer(cols = c(7:11), 
+               names_to = "caterpillar",
+               values_to = "weight",
+               values_drop_na = TRUE)
+
+#make summary
+cat_summary <- cat_long %>% 
+            group_by(Experiment, soil_inocula, ID) %>%
+  summarise(
+    n = n(),
+    mean = mean(weight, na.rm = TRUE),
+    sd = sd(weight, na.rm = TRUE)) %>%
+    mutate(se = sd/sqrt(n))
+
+
+```
+
+##Plot
+```{r}
+
+#plot boxplot Phytohormone-treated
+phyto <- ggplot(data = subset(cat_summary, Experiment == "simulated"),
+       mapping = aes(x = soil_inocula, y = mean), colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(cat_summary, Experiment == "simulated"),
+              mapping = (aes(soil_inocula, mean, fill = soil_inocula)),
+              shape = 21, size = 1.8, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  ylim(0,35)+
+  axis_looks+
+  theme(legend.position = "none")+
+  labs(y="M. brassicae weight (mg) 8dpi", x=" ")
+
+#plot boxplot Herbivore-infested
+insects <- ggplot(data = subset(cat_summary, Experiment == "real_insects"),
+       mapping = aes(x = soil_inocula, y = mean), colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(cat_summary, Experiment == "real_insects"),
+              mapping = (aes(soil_inocula, mean, fill = soil_inocula)),
+              shape = 21, size = 1.8, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,35)+
+  theme(legend.position = "none")+
+  labs(y="M. brassicae weight (mg) 8dpi", x=" ")
+
+#combine plots
+library(patchwork)
+combined_plot <- phyto/insects
+
+#check
+combined_plot
+
+```
+
+##Stats
+```{r}
+
+#Phytohormone-treated
+phyto <- subset(cat_summary, Experiment == "simulated")
+phyto %>% group_by(Experiment,soil_inocula) %>% summarise(n=n()) #not-balanced
+
+#lm
+lm.p <- glm(mean ~ soil_inocula, 
+            family=gaussian,
+         data=phyto)
+
+lm.p_table <- car::Anova(lm.p, type="II", test.statistic="LR") #no effect of soil treatment
+simulateResiduals(lm.p, plot=T) #ok
+
+#Herbivore-infested
+insects <- subset(cat_summary, Experiment == "real_insects")
+insects %>% group_by(Experiment,soil_inocula) %>% summarise(n=n()) #balanced
+
+
+#glmer
+lm.i <- glm(mean ~ soil_inocula, 
+            family=gaussian,
+         data=insects)
+
+lm.i_table <- car::Anova(lm.i, type="II", test.statistic="LR") #no effect of soil treatment
+simulateResiduals(lm.i, plot=T) #ok
+
+
+```
+
+#(d)Aphid population development
+##Data
+```{r}
+
+#load data
+aphids <- readRDS("./Data/plant_data/aphids.rds")
+
+#change levels of Experiment & soil treatment
+aphids <- aphids %>%
+                mutate(Experiment = factor(Experiment,
+                                           levels = c("simulated", "real_insects" )))%>%
+                mutate(soil_inocula = factor(soil_inocula,
+                                                      levels=c("control-conditioned",
+                                                               "JA-conditioned", "SA-conditioned")))
+
+
+#remove plants with wrong infestation
+aphids <- aphids %>% 
+          subset(ID != 145 & ID!= 351)%>% #removed 2 plants with wrong infestation 
+                   droplevels()
+
+#make it long
+aphids_long <- aphids %>% 
+               tidyr::pivot_longer(cols = c(7:8), 
+               names_to = "time_point",
+               values_to = "count",
+               values_drop_na = TRUE)
+
+#change to factor
+aphids_long[c(1:2,7)] <- lapply(aphids_long[c(1:2,7)], as.factor)
+
+#order time points
+aphids_long$time_point <- factor(aphids_long$time_point,
+                                 levels = c("dpi_8", "dpi_14")) 
+
+
+```
+
+##Plot
+```{r}
+
+#Phytohormone-treated
+aphids_8dpi <- ggplot(data = subset(aphids_long, Experiment == "simulated" & time_point == "dpi_8"),
+                 mapping = aes(x = soil_inocula, y = count), 
+              colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(aphids_long, Experiment == "simulated" & time_point == "dpi_8"),
+              mapping = (aes(soil_inocula, count, fill = soil_inocula)),
+              shape = 21, size = 1.8, alpha=0.9, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,80)+
+  #facet_wrap(~time_point, scales="free_y")+
+  theme(legend.position="none")
+
+aphids_14dpi <- ggplot(data = subset(aphids_long, Experiment == "simulated" & time_point == "dpi_14"),
+                 mapping = aes(x = soil_inocula, y = count), 
+              colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(aphids_long, Experiment == "simulated" & time_point == "dpi_14"),
+              mapping = (aes(soil_inocula, count, fill = soil_inocula)),
+              shape = 21, size = 1.8, alpha=0.9,color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,600)+
+  #facet_wrap(~time_point, scales="free_y")+
+  theme(legend.position="none")
+
+
+#Herbivore-infested
+aphids_8dpi_i <- ggplot(data = subset(aphids_long, Experiment == "real_insects" & time_point == "dpi_8"),
+                 mapping = aes(x = soil_inocula, y = count), 
+              colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(aphids_long, Experiment == "real_insects" & time_point == "dpi_8"),
+              mapping = (aes(soil_inocula, count, fill = soil_inocula)),
+              shape = 21, size = 1.8, alpha=0.9,color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,80)+
+  #facet_wrap(~time_point, scales="free_y")+
+  theme(legend.position="none")
+
+aphids_14dpi_i <- ggplot(data = subset(aphids_long, Experiment == "real_insects" & time_point == "dpi_14"),
+                 mapping = aes(x = soil_inocula, y = count), 
+              colour= soil_inocula)+
+  geom_boxplot(mapping = aes(fill= soil_inocula), position = position_dodge(width = 0.8), lwd=0.8)+
+  geom_jitter(data = subset(aphids_long, Experiment == "real_insects" & time_point == "dpi_14"),
+              mapping = (aes(soil_inocula, count, fill = soil_inocula)),
+              shape = 21, size = 1.8, alpha=0.9,color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,600)+
+  #facet_wrap(~time_point, scales="free_y")+
+  theme(legend.position="none")
+
+#combined plot
+p.aphids <- (aphids_8dpi+aphids_14dpi)/(aphids_8dpi_i+aphids_14dpi_i)
+
+#check
+p.aphids
+
+```
+
+
+##Stats
+```{r}
+
+#full df
+aphids_long
+
+#Phytohormone-treated
+phyto <- subset(aphids_long, Experiment == "simulated")
+phyto %>% group_by(Experiment,soil_inocula) %>% summarise(n=n()) 
+
+#run glm
+glm.p <- glm(count ~ soil_inocula*time_point,
+              family=Gamma(link="log"),
+              data=phyto)
+
+#check model assumptions
+simulateResiduals(glm.p , plot=T) #ok
+
+#get summary
+car::Anova(glm.p , type="II", test.statistic="LR") #sig for timepoint and marginally sig for soil treatment, no interaction
+
+
+#Herbivore-infested
+insects <- subset(aphids_long, Experiment == "real_insects")
+insects %>% group_by(Experiment,soil_inocula) %>% summarise(n=n())
+
+#run glm
+glm.i <- glm(count ~ soil_inocula*time_point,
+              family=Gamma(link="log"),
+              data=insects)
+
+#check model assumptions
+simulateResiduals(glm.i, plot=T) #ok
+
+#get summary
+car::Anova(glm.i , type="II", test.statistic="LR") #sig for timepoint, non-significant for soil treatment nor interaction. 
+
+```
+

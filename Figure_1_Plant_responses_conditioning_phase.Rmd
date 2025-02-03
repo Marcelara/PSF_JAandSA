@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Figure 1: Plant responses in conditioning phase"
 author: "Marcela Aragon"
 date: "2025-02-03"
 output: html_document
@@ -37,6 +37,8 @@ library(multcomp)
 library(postHoc)
 library(car)
 library(lsr)
+library(ropls) #PLS-DA
+library(mixOmics) #PLS-DA
 
 ```
 
@@ -201,10 +203,6 @@ phyto <- phytohormones %>%
                 mutate(plant_pathway_induced = factor(plant_pathway_induced,
                                                       levels=c("Control", "JA", "SA")))
 
-#subsetting df to only conditioning
-conditioning <- phytohormones %>% 
-                      filter(Phase == "conditioning")
-
 #make long format for plotting
 long <- phyto %>% 
               tidyr::pivot_longer(cols = c(11:18), 
@@ -225,17 +223,18 @@ long$phytohormone <-factor(long$phytohormone,
 conditioning_long <- long %>% 
                 filter(Phase == "conditioning")
 
+#subsetting df to only conditioning
+conditioning <- phytohormones %>% 
+                      filter(Phase == "conditioning")
+
+
 #Now I have 3 df, phyto, long and conditioning 
 
 ```
 
 Now let's calculate the PLS-DA
-```{r PLS-DA phytohormones conditioning data2}
+```{r PLS-DA phytohormones conditioning; data PLSDA}
 #Some of the following code was written by Els van de Zande, thank you Els!
-
-#load libraries
-library(ropls) #PLS-DA
-library(mixOmics) #PLS-DA
 
 #get matrix
 matrixdata<-conditioning[,11:18]# keep only values
