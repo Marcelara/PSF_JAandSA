@@ -1,0 +1,979 @@
+---
+title: "Pre-procesing of amplicon data (16S and ITS)"
+author: "Marcela Aragon"
+date: "2025-02-04"
+output: html_document
+---
+
+This script will deal with importing tables produced by processing the raw fastq sequences with the DADA2/Ernakovich pipeline into a phyloseq object, plus the basic pre-processing following some steps of this tutorial: https://benjjneb.github.io/dada2/tutorial.html 
+
+
+#General settings
+
+##Loading packages
+```{r loading packages}
+
+#Set working directory to project directory 
+setwd("./")
+getwd() #ok
+
+
+#Load libraries
+
+library(phyloseq)
+library(Biostrings)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ape)
+library(tibble)
+library(readxl)
+library(decontam)
+library(viridis)
+library(vegan)
+library(GGally)
+library(microbiome)
+library(metagMisc)
+library(varhandle)
+
+#Set plots theme
+ggplot2::theme_set(theme_bw())
+
+```
+
+# 16S
+
+## Loading info 
+
+I recommend following these tutorial if you are new to phyloseq: https://www.gdc-docs.ethz.ch/MDA/handouts/MDA20_PhyloseqFormation_Mahendra_Mariadassou.pdf 
+
+
+### OTU table
+
+```{r 16S otu table}
+
+#1. Load OTU table
+otu <- otu_table(object = read.table(file = "./Data/amplicon_data/16S/seqtab_final.txt", 
+                                              header = TRUE,
+                                              row.names = 1, # first column has row names (ASV names)
+                                              check.names = FALSE), # prevents "X" to be added to column names
+                                              taxa_are_rows = TRUE)
+
+#removing rest of sample names so it matches Harvest ID
+x <- sample_names(otu)
+y <- gsub(".*\\.", "", x) #removing everything that is before the last point https://statisticsglobe.com/r-remove-characters-before-or-after-point-in-string 
+
+#replace
+sample_names(otu) <- y
+
+#check
+head(otu)
+
+#clean 
+rm(x, y)
+
+```
+
+### Taxonomy table
+
+```{r 16S taxonomy table}
+
+#2. Load taxonomy table
+taxtab <-read.table(file = "./Data/amplicon_data/16S/taxonomy.tsv", 
+                               header = TRUE,
+                               sep = "\t",
+                               row.names = 1, # first column has row names (ASV names)
+                               check.names = FALSE) # prevents "X" to be added to column names, such as X49_16S
+
+# adjusts number and name of columns
+taxtab<- separate(data = taxtab,
+                          col = Taxon,
+                          into =c("Kingdom", 
+                                       "Phylum", 
+                                       "Class", 
+                                       "Order", 
+                                       "Family",
+                                       "Genus", 
+                                       "Species"),
+                               sep = ";")
+
+# saves taxtable as phyloseq object
+taxtab<-tax_table(object = as.matrix(taxtab))
+
+```
+
+### Sequences
+
+```{r 16s refseq}
+
+#3. Load sequences 
+refseq <- refseq(physeq = Biostrings::readDNAStringSet(filepath = "./Data/amplicon_data/16S/repset.fasta", use.names = TRUE)) 
+
+head(taxa_names(refseq))
+
+```
+
+### Phylogenetic tree
+
+```{r 16s phylotree}
+
+#4. Load phylogenetic tree 
+
+tree <- phy_tree(read.tree("./Data/amplicon_data/16S/tree.nwk"))
+tree
+
+```
+
+### Metadata
+
+```{r metadata}
+#5. Load metadata 
+metadata_full <- read.table(file = "./Data/amplicon_data/16S/Mapping_file_16S_Family_experiment.txt", 
+                                                  header = TRUE,
+                                                  sep = "\t",
+                                                  row.names = 1, # first column has row names (ASV names)
+                                                  check.names = FALSE)
+
+#This files contains samples sequenced from other experiments as well, I'll keep only samples from PSF experiments
+colnames(metadata_full)
+str(metadata_full)
+metadata_full$Sp_speed <- as.factor(metadata_full$Sp_speed)
+metadata_full$sample_type <- as.factor(metadata_full$sample_type)
+metadata_full$Harvest_ID <- as.factor(metadata_full$Harvest_ID)
+levels(metadata_full$Sp_speed) #I need BraOle, Blank, S1 and M1 (BraOle=insect-infested, S1=phytohormone-treated, M1=EPG) 
+levels(metadata_full$sample_type) #rhizoplane and Blank
+
+metadata_sel <- metadata_full %>% 
+            filter(Sp_speed %in% c("BraOle", "S1", "Blank", "M1"),
+                   sample_type %in% c("rhizoplane", "Blank"),     #remove topsoil 
+                   !Harvest_ID %in% c("Blank_top1", "Blank_top2"))%>% #remove leftover blanks 
+                   droplevels()
+
+#remove non-informative columns from samples of other experiment
+metadata_sel <- metadata_sel[ , ! names(metadata_sel) %in% 
+                                  c("Block_row_column",
+                                     "Rows", "Columns", 
+                                    "plant_family", "Lineage", "Tribe", "Guest", 
+                                    "Rainbow", "Flowering", "Rainbow.batch", "Missing",
+                                    "Plate_postion", "Plate_row", "Plate_column", "Plate_name",
+                                    "GQ_submission_order", "Plate_place")]
+
+levels(metadata_sel$Sp_speed) #ok
+          
+```
+
+Adding experimental information to metadata
+
+```{r 16s fixing metadata}
+
+#Add more metadata from experiments; phyto=Phytohormone-treated, insects=herbivore-infested
+phyto <- read_excel("./Data/plant_data/CleanData_PSF.xlsx", sheet="cond_phytohormones",
+                    col_names = TRUE) 
+
+insects <- read_excel("./Data/plant_data/CleanData_PSF.xlsx", sheet="cond_real_insects",
+                    col_names = TRUE) 
+#check colnames
+colnames(phyto)
+colnames(insects)
+colnames(phyto)[3] <- 'ID_experiment' #change name so it matches
+
+#make it to factor
+phyto[c(1:12, 14:18, 20:21)] <- lapply(phyto[c(1:12, 14:18, 20:21)], factor)
+str(phyto)
+insects[c(1:12, 15:20, 22:23)] <- lapply(insects[c(1:12, 15:20, 22:23)], factor)
+
+#make new column in both
+phyto <- phyto %>% 
+           mutate(Harvest_ID = 
+                 case_when(
+                    Experiment == "cond_phytohormones" ~ Family_Harvest_ID))
+
+insects <- insects %>% 
+           mutate(Harvest_ID =
+                    case_when(
+                    Experiment == "cond_real_insects"~ ID_experiment))
+
+#adding _ch so it matches sample_id from microbiome data
+insects$Harvest_ID = paste(insects$Harvest_ID,"ch", sep = "_")
+
+#merge
+metadata.cond <- bind_rows(phyto, insects)
+
+#remove & re-arrange columns
+metadata.cond <- metadata.cond[ , ! names(metadata.cond) %in% 
+                                  c("Family_Species_code", "Family_Harvest_ID",
+                                    "Rainbow", "soil")]  
+#merge with ps metadata 
+metadata.merged <- dplyr::left_join(metadata_sel, metadata.cond, by="Harvest_ID") #join Haris & Family metadata
+
+#add rownames
+row.names(metadata.merged) <- paste(metadata.merged$Harvest_ID,"16S", sep = "_")
+metadata.merged$root_weight <- as.numeric(metadata.merged$root_weight)
+metadata.merged$Stress <- as.factor(metadata.merged$Stress)
+
+#Add 'Experiment' to blanks 
+metadata.merged$Experiment[metadata.merged$Harvest_ID == 'Blank_S1'] <- 'cond_phytohormones'
+metadata.merged$Experiment[metadata.merged$Harvest_ID == 'Blank_CH'] <- 'cond_real_insects'
+
+#Add Experiment for M1
+x <- addNA(metadata.merged$Experiment) #add NA's
+metadata.merged$Experiment <- x #replace
+metadata.merged$Experiment <- as.character(metadata.merged$Experiment) #make it a character
+metadata.merged$Experiment[is.na(metadata.merged$Experiment)] <- 'EPG' #change it
+metadata.merged$Experiment <- as.factor(metadata.merged$Experiment)
+
+#Add whether is a true sample or a blank sample
+metadata.merged <- metadata.merged %>% 
+                   mutate(sample_or_blank = 
+                            case_when(
+                              Stress == "Blank" ~ "blank",
+                              TRUE ~ "sample"))
+
+#relocate
+metadata <- metadata.merged %>% 
+                  relocate(Target, Harvest_ID, Experiment, treated_with, plant_pathway_induced,
+                           herbivore, herbivory) %>%
+                  relocate(root_weight, .after=shoot_biomass) %>%
+                  relocate(where(is.numeric), .after=Stress) %>%
+                  relocate(ID_experiment, .after=Plate)  #this is the plant ID from Haris' data
+
+#Include plant_pathway induced for M1 as well 
+metadata  <- metadata %>%
+            mutate(plant_pathway_induced=case_when(
+             (Experiment == "EPG" & Stress == "Control") ~ "Control",
+             (Experiment == "EPG" & Stress == "MeJA") ~ "JA",
+             (Experiment == "EPG" & Stress == "SA") ~ "SA",
+             .default=as.character(plant_pathway_induced))) #keeps the rest as it is
+
+#Finally make it a sample_data object for phyloseq 
+metadata<- sample_data(metadata)
+head(metadata)
+
+#clean
+rm(metadata_full, metadata.cond,
+   metadata.merged, phyto, insects, metadata_sel, x)
+
+```
+
+###Final ps object
+
+Now, make phyloseq object  
+
+```{r 16S making ps object}
+
+#Merge to create phyloseq 
+ps_16S <- merge_phyloseq(metadata, otu, taxtab, refseq, tree)
+
+# change names from ASV to bASV, so they can be distinguished from fungal ASVs
+taxa_names(ps_16S)<- paste("b", taxa_names(ps_16S), sep = "")
+
+#add total number of reads 
+ps_16S@sam_data$total_reads <- sample_sums(ps_16S)
+hist(ps_16S@sam_data$total_reads) #some with less than 50,000, some with more than 250,000
+
+#clean to not have it twice
+rm(tree, otu, taxtab, refseq, metadata)
+
+```
+
+## Filtering
+
+### Remove contaminants 
+
+Following: https://benjjneb.github.io/decontam/vignettes/decontam_intro.html, https://mcic-osu.github.io/2020-12-microbiomics-workshop/08-postASV-analysis.html & parts of Pedro's script
+
+The decontam package tests whether abundance of a certain taxa is not associated with DNA concentration. Because DNA concentration measurements are not very accurate and we want to remove possible contaminants we use a relaxed p value following the Microbiomics Workshop.
+
+
+```{r decontam}
+
+#First, save ps_16S object without filtering to compare at the end.
+ps_16S_raw <- ps_16S
+
+#Continue with Decontam package
+
+#makes new column with 'TRUE' just for blanks
+ps_16S@sam_data$is.neg <- ps_16S@sam_data$Stress=="Blank" 
+
+#Combining both frequency and prevalence approaches for 16S
+contamdf.both <- isContaminant(ps_16S,
+                               method="combined",
+                               neg="is.neg",
+                               batch="Experiment",
+                               threshold=0.2,
+                               conc="Amplicon_concentation_ngul")
+
+table(contamdf.both$contaminant) #379 ASVs contaminants     
+
+## Check which taxa are contaminants:
+ps_contam <- prune_taxa(contamdf.both$contaminant, ps_16S)
+tax_table(ps_contam) #lots of most abundant ASVs
+sort(table(tax_table(ps_contam)[, 2]), decreasing=TRUE) 
+
+#What proportion of reads were removed as contaminants?
+ps_noncontam <- prune_taxa(!contamdf.both$contaminant, ps_16S)
+
+pre <- sum(sample_sums(ps_16S))
+post <- sum(sample_sums(ps_noncontam))
+
+((pre-post)/pre)*100 #only 0.7%
+
+#names of ASVs
+contaminants.both <- rownames(subset(contamdf.both, contaminant%in%c("TRUE")))
+
+#Now finally make new ps without contaminants 
+
+#clean physeq object by removing contaminant OTUS
+ps_16S <- prune_taxa(!taxa_names(ps_16S) %in% contaminants.both, ps_16S) 
+
+#remove those ASVs with now 0 reads 
+prune_taxa(taxa_sums(ps_16S) >0, ps_16S)
+
+#check number of reads 
+plot(sort(sample_sums(ps_16S))) #still some samples with very few reads and lots of reads
+
+#make new column with this information
+ps_16S@sam_data$libsize_after_decontam <- sample_sums(ps_16S)
+
+sort(ps_16S@sam_data$libsize_after_decontam) #3 samples with very low reads 
+
+#clean
+rm(contamdf.freq, contamdf.prev, pre, post, sums,
+     p_cont, ps_contam, ps_noncontam, contaminants.prev, contaminants.freq, contaminants.both, contamdf.both)
+
+```
+
+### Non-bacterial & plastid ASVs
+```{r filtering non-bacterial and plastid ASVs}
+
+ps_16S_plastid <- ps_16S #save to compare 
+
+# see contamination of non-bacterial ASVs
+table(tax_table(ps_16S)[, 1]) #there's Archea & unassigned
+
+# keeps only Bacteria ASVs
+ps_16S <- subset_taxa(ps_16S, Kingdom=="d__Bacteria")
+ps_16S #64,238 taxa 
+
+#Check plastid reads 
+#define plastid, mitochondria and host plant contamination ps objects
+Mitochondria_ps<- subset_taxa(ps_16S, Family==" f__Mitochondria" | Family == "Mitochondria") #there's a 
+Chloroplast_ps <-subset_taxa(ps_16S, Order == " o__Chloroplast" | Order == "Chloroplast") #space between " o_..." 
+
+#host_plant_ps<-merge_phyloseq(Chloroplast_ps, Mitochondria_ps) #not working because of phy_tree
+
+#removing phy_tree because otherwise merge does not work
+Mitochondria_ps@phy_tree <- NULL
+Chloroplast_ps@phy_tree <- NULL
+
+#merge
+host_plant_ps<-merge_phyloseq(Chloroplast_ps, Mitochondria_ps)
+
+#quick histogram showing plant DNA contamination
+hist(sample_sums(host_plant_ps)/sample_sums(ps_16S)*100, breaks = 100) #from 0 to 66% host DNA contamination contamination
+
+# define host plant 16S contamination as metadata
+ps_16S@sam_data$Mitochondria_reads<-sample_sums(Mitochondria_ps)
+ps_16S@sam_data$Chloroplast_reads<-sample_sums(Chloroplast_ps)
+ps_16S@sam_data$Plastid_reads<-sample_sums(host_plant_ps) #both
+ps_16S@sam_data$Plastid_contamination_pct<-sample_sums(host_plant_ps)/sample_sums(ps_16S)*100
+
+#Remove plastid ASVs
+# prune_taxa only works with those to keep not to "keep out", thus a little trick is needed
+# to make a new vector: https://github.com/joey711/phyloseq/issues/652
+
+plastid_taxa <- taxa_names(host_plant_ps)
+all_taxa <- taxa_names(ps_16S)
+taxa_to_keep <- all_taxa[!all_taxa %in% plastid_taxa] 
+
+ps_16S <- prune_taxa(taxa_to_keep, ps_16S)
+
+#compare 
+ps_16S_plastid #old ps
+ps_16S #new ps filtered without plastid reads (-354 ASVs) 61,949 ASVs
+
+mean(sample_sums(ps_16S))/mean(sample_sums(ps_16S_plastid)) #also in number of reads (~20% less) = 79% of reads kept
+
+#clean
+rm(Mitochondria_ps, Chloroplast_ps, host_plant_ps)
+
+#On average low host DNA contamination (16%), however for some samples host DNA contamination was more than 50% of the reads 
+
+```
+
+
+### By sample reads & non-informative ASVs
+
+First, by full ps
+```{r filtering by sample reads & non-informative ASVs}
+
+ps_16S_filtering <- ps_16S #make another one so you can compare
+
+#quick check on the number of reads 
+sums <- sample_sums(ps_16S)
+sums[order(sums)]
+
+#add number of reads after plastid
+ps_16S@sam_data$libsize_after_plastid<-sample_sums(ps_16S)
+
+#for now, just remove samples with low number of reads, removing those with less than 10,000 reads
+ps_16S <- subset_samples(ps_16S, libsize_after_plastid > 10000) 
+
+#remove blanks
+ps_16S <- subset_samples(ps_16S, sample_or_blank != "blank") 
+
+#remove ASVs with low-length sequences
+#check final sequence length. 16S sequences smaller than 380bp should be discarded
+summary(ps_16S@refseq@ranges@width) 
+hist(as.data.frame(refseq(ps_16S)@ranges)$width, breaks = 50)
+
+#remove the ones smaller than 380bp
+ps_16S<- prune_taxa(taxa = as.data.frame(refseq(ps_16S)@ranges)$width>380,
+                      x = ps_16S) #431 ASVs removed
+
+#remove those ASVs with now 0 reads 
+prune_taxa(taxa_sums(ps_16S) >0, ps_16S) #48,625 taxa
+
+#let's see how many sequences were kept after this filtering
+sum(sample_sums(ps_16S))/sum(sample_sums(ps_16S_filtering))*100 # 99.41% of sequences kept
+
+#add column to sample_data
+ps_16S@sam_data$libsize_after_filtering <- sample_sums(ps_16S)
+
+#add how many reads were kept at the end
+ps_16S@sam_data$pct_reads_kept <- ((ps_16S@sam_data$libsize_after_filtering/ps_16S@sam_data$total_reads)*100)
+
+#let's keep only those samples from the phytohormone-treated and herbivore-infested experiments 
+ps_16S <-  subset_samples(ps_16S, Experiment %in% c("cond_phytohormones", "cond_real_insects"))
+
+#remove those ASVs with now 0 reads 
+prune_taxa(taxa_sums(ps_16S) >0, ps_16S) #35,678 taxa
+
+#check
+sample_data(ps_16S) %>%
+  data.frame() %>%
+  count(Experiment)
+
+#get summary info per experiment
+ps_16S@sam_data %>% 
+                 data.frame() %>% 
+                 group_by(Experiment)%>%
+                 summarise(reads_per_sample = mean(libsize_after_filtering),
+                           stdev=sd(libsize_after_filtering),
+                           reads_kept_perc= mean(pct_reads_kept),
+                           stdev_perc=sd(pct_reads_kept),
+                           n=n())
+
+#get summary info per treatment & experiment [Supplementary Table S3 16S]
+reads_summary.16S <- ps_16S@sam_data %>% 
+                    data.frame() %>% 
+                    group_by(Experiment, plant_pathway_induced)%>%
+                    summarise(reads_per_sample = mean(libsize_after_filtering),
+                           stdev=sd(libsize_after_filtering),
+                           reads_kept_perc= mean(pct_reads_kept),
+                           stdev_perc=sd(pct_reads_kept),
+                           n=n())
+
+```
+
+##Final phyloseq
+
+Now, we will save a full phyloseq object with both experiments (1) and a splitted ps object by experiment (2).
+```{r }
+
+#First, check filtering steps
+ps_16S_raw #64,698
+ps_16S_plastid #64,319
+ps_16S_filtering #61,949
+ps_16S #61,295 in final one 
+
+#1. Now save final full phyloseq 
+save(ps_16S, file = "./Data/phyloseq_objects/ps_16S_Full.RData")
+
+#as they come from independent experiments, split the ps object to save the two experiments independently
+ps_16S_ByExperiment <- phyloseq_sep_variable(ps_16S, variable=c("Experiment"), drop_zeroes = T)
+
+#2. Save ps object split by experiment 
+save(ps_16S_ByExperiment, file = "./Data/phyloseq_objects/ps_16S_ByExperiment.RData")
+
+#Finally, clean up before moving forward with ITS
+rm(ps_16S_raw, ps_16S_plastid, ps_16S_filtering, taxa_to_keep, all_taxa)
+
+```
+
+#ITS
+##Loading info
+### OTU table
+```{r ITS otu table}
+
+#1. Load OTU table
+otu <- otu_table(object = read.table(file = "./Data/amplicon_data/ITS/seqtab_final.txt", 
+                                              header = TRUE,
+                                              row.names = 1, # first column has row names (ASV names)
+                                              check.names = FALSE), # prevents "X" to be added to column names
+                                              taxa_are_rows = TRUE)
+
+#removing rest of sample names so it matches Harvest ID
+x <- sample_names(otu)
+y <- gsub(".*\\.", "", x) #removing everything that is before the last point https://statisticsglobe.com/r-remove-characters-before-or-after-point-in-string 
+
+#replace
+sample_names(otu) <- y
+
+#clean 
+rm(x, y)
+
+#check
+otu #now correct sample names 
+
+```
+
+### Taxonomy table
+
+```{r ITS taxonomy table}
+#2. Load taxonomy table
+taxtab <-read.table(file = "./Data/amplicon_data/ITS/taxonomy.tsv", 
+                               header = TRUE,
+                               sep = "\t",
+                               row.names = 1, # first column has row names (ASV names)
+                               check.names = FALSE) # prevents "X" to be added to column names, such as X49_16S
+
+# adjusts number and name of columns
+taxtab <- separate(data = taxtab,
+                          col = Taxon,
+                          into =c("Kingdom", 
+                                       "Phylum", 
+                                       "Class", 
+                                       "Order", 
+                                       "Family",
+                                       "Genus", 
+                                       "Species"),
+                               sep = ";")
+head(taxtab) #check
+
+# saves taxtable as phyloseq object
+taxtab<-tax_table(object = as.matrix(taxtab))
+
+#The most abundant ASV is classified as NA at Phylum level
+
+```
+
+### Sequences
+
+```{r ITS sequences}
+
+#3. Load sequences 
+refseq <- refseq(physeq = Biostrings::readDNAStringSet(filepath = "./Data/amplicon_data/ITS/repset.fasta",
+                                                       use.names = TRUE)) 
+
+head(taxa_names(refseq)) #check
+```
+
+### Phylogenetic tree
+
+```{r ITS phylotree}
+
+#4. Load phylogenetic tree 
+tree <- phy_tree(read.tree("./Data/amplicon_data/ITS/tree.nwk"))
+
+```
+
+### Metadata
+
+```{r ITS metadata}
+
+#5. Load metadata from Family Experiment (sequencing-sample metadata)
+metadata_full <- read.table(file = "./Data/amplicon_data/ITS/Mapping_file_ITS_Family_experiment.txt", 
+                                                  header = TRUE,
+                                                  sep = "\t",
+                                                  row.names = 1, # first column has row names (ASV names)
+                                                  check.names = FALSE)
+
+#check df 
+colnames(metadata_full)
+str(metadata_full)
+metadata_full$Sp_speed <- as.factor(metadata_full$Sp_speed)
+metadata_full$sample_type <- as.factor(metadata_full$sample_type)
+metadata_full$Harvest_ID <- as.factor(metadata_full$Harvest_ID)
+
+#Select samples 
+levels(metadata_full$Sp_speed) #I need BraOle (Insect-infested) and S1 (Phytohormone-treated)
+levels(metadata_full$sample_type) #I need rhizoplane and Blank
+
+metadata_sel <- metadata_full %>% 
+            filter(Sp_speed %in% c("BraOle", "S1", "Blank", "M1"),
+                   sample_type %in% c("rhizoplane", "Blank"),     #remove topsoil 
+                   !Harvest_ID %in% c("Blank_top1", "Blank_top2")) #remove leftover blanks 
+
+#remove non-informative columns from Family Experiment
+metadata_sel <- metadata_sel[ , ! names(metadata_sel) %in% 
+                                  c("Block_row_column", "Sp_speed",
+                                    "Speed", "Block", "Rows", "Columns", "Plant_species_name",
+                                    "plant_family", "Lineage", "Tribe", "Guest", 
+                                    "Rainbow", "Flowering", "Rainbow.batch", "Missing",
+                                    "Plate_postion", "Plate_row", "Plate_column", "Plate_name",
+                                    "GQ_submission_order", "Plate_place", "Shoot_.DryWeight")]
+
+```
+
+```{r ITS metadata 2}
+#Now, let's add information from the PSF experiment itself into the metadata to be able to make correlations
+
+#Add more metadata from experiment 
+phyto <- read_excel("./Data/plant_data/CleanData_PSF.xlsx", sheet="cond_phytohormones",
+                    col_names = TRUE) 
+
+insects <- read_excel("./Data/plant_data/CleanData_PSF.xlsx", sheet="cond_real_insects",
+                    col_names = TRUE) 
+#check colnames
+colnames(phyto)
+colnames(insects)
+colnames(phyto)[3] <- 'ID_experiment' #change name so it matches
+
+#make it factors
+phyto[c(1:12, 14:18, 20:21)] <- lapply(phyto[c(1:12, 14:18, 20:21)], factor)
+str(phyto)
+insects[c(1:12, 15:20, 22:23)] <- lapply(insects[c(1:12, 15:20, 22:23)], factor)
+
+#make new column in both to add the ID number so it matches the microbiome data 
+phyto <- phyto %>% 
+           mutate(Harvest_ID = 
+                 case_when(
+                    Experiment == "cond_phytohormones" ~ Family_Harvest_ID))
+
+insects <- insects %>% 
+           mutate(Harvest_ID =
+                    case_when(
+                    Experiment == "cond_real_insects"~ ID_experiment))
+
+#adding _ch so it matches sample_id from microbiome data
+insects$Harvest_ID = paste(insects$Harvest_ID,"ch", sep = "_")
+
+#merge
+metadata.cond <- bind_rows(phyto, insects)
+
+#remove & re-arrange columns
+metadata.cond <- metadata.cond[ , ! names(metadata.cond) %in% 
+                                  c("Family_Species_code", "Family_Harvest_ID",
+                                    "Rainbow", "soil")]  
+#merge with ps metadata 
+metadata.merged <- dplyr::left_join(metadata_sel, metadata.cond, by="Harvest_ID") #join microbiome & experimental data
+
+#add rownames
+row.names(metadata.merged) <- paste(metadata.merged$Harvest_ID,"ITS", sep = "_")
+metadata.merged$root_weight <- as.numeric(metadata.merged$root_weight)
+metadata.merged$Stress <- as.factor(metadata.merged$Stress)
+
+#Add 'Experiment' to blanks 
+metadata.merged$Experiment[metadata.merged$Harvest_ID == 'Blank_S1'] <- 'cond_phytohormones'
+metadata.merged$Experiment[metadata.merged$Harvest_ID == 'Blank_CH'] <- 'cond_real_insects'
+
+#Add Experiment for M1
+x <- addNA(metadata.merged$Experiment) #add NA's
+metadata.merged$Experiment <- x #replace
+metadata.merged$Experiment <- as.character(metadata.merged$Experiment) #make it a character
+metadata.merged$Experiment[is.na(metadata.merged$Experiment)] <- 'EPG' #change it
+metadata.merged$Experiment <- as.factor(metadata.merged$Experiment)
+
+metadata.merged$Experiment[metadata.merged$Harvest_ID == 'Blank_M1'] <- 'EPG'
+
+#Add whether is a true sample or a blank sample
+metadata.merged <- metadata.merged %>% 
+                   mutate(sample_or_blank = 
+                            case_when(
+                              Stress == "Blank" ~ "blank",
+                              TRUE ~ "sample"))
+#relocate
+metadata <- metadata.merged %>% 
+                  relocate(Target, Harvest_ID, Experiment, treated_with, plant_pathway_induced,
+                           herbivore, herbivory) %>%
+                  relocate(root_weight, .after=shoot_biomass) %>%
+                  relocate(where(is.numeric), .after=Stress) %>%
+                  relocate(ID_experiment, .after=Plate)  #this is the plant ID from Haris' data
+
+#Include plant_pathway induced for M1 as well 
+metadata  <- metadata %>%
+            mutate(plant_pathway_induced=case_when(
+             (Experiment == "EPG" & Stress == "Control") ~ "Control",
+             (Experiment == "EPG" & Stress == "MeJA") ~ "JA",
+             (Experiment == "EPG" & Stress == "SA") ~ "SA",
+             .default=as.character(plant_pathway_induced))) #keeps the rest as it is
+
+#Finally make it a sample_data object for phyloseq 
+metadata<- sample_data(metadata)
+head(metadata)
+
+#clean up
+rm(metadata_full, metadata_sel, metadata.cond, metadata.merged, phyto, insects)
+
+```
+
+### Final ps object 
+
+Now, make phyloseq object  
+
+```{r ITS making ps object}
+
+#Merge to create phyloseq 
+ps_ITS <- merge_phyloseq(metadata, otu, taxtab, refseq, tree)
+
+# change names from ASV to fASV, so they can be distinguished from bacterial ASVs
+taxa_names(ps_ITS )<- paste("f", taxa_names(ps_ITS), sep = "")
+
+#add total number of reads 
+ps_ITS@sam_data$total_reads <- sample_sums(ps_ITS)
+
+#clean to not have it twice
+rm(tree, otu, taxtab, refseq, metadata, x)
+
+
+```
+
+##Filtering
+
+https://mcic-osu.github.io/2020-12-microbiomics-workshop/08-postASV-analysis.html#Filter_samples
+
+https://joey711.github.io/phyloseq/preprocess.html 
+
+##Remove contaminants 
+Run decontam package and result was losing between 20% and 24% of the reads which seems like a lot, perhaps ITS data is different than 16S where only 0.7% of the reads were lost when using a combination of prevalence and frequency.
+
+Frequency plots also seemed a bit off as these ASVs have a lot of reads but not necessarily extremely more at low DNA concentrations. Therefore, I will skip the decontamination for fungi altogether.
+
+
+## Non-fungal ASVs
+```{r filtering non-fungal ASVs}
+
+#save it to compare
+ps_ITS_raw <- ps_ITS #3,553 taxa
+
+# see contamination of non-fungal ASVs
+table(tax_table(ps_ITS)[, 1]) #there's Protista, Rhizaria and Unassigned
+
+# keeps only Fungal ASVs
+ps_ITS <- subset_taxa(ps_ITS, Kingdom=="k__Fungi")
+ps_ITS #2,825 taxa 
+
+#Add number of reads before filtering
+ps_ITS@sam_data$libsize_after_nonFungi <-sample_sums(ps_ITS)
+
+#check
+pre <- sum(ps_ITS@sam_data$total_reads)
+post <- sum(ps_ITS@sam_data$libsize_after_nonFungi)
+
+((pre-post)/pre)*100 #2.38% reads lost 
+
+
+```
+
+### Add missing taxonomy
+
+A lot of the most abundant ASVs for ITS have a NA at phylum level, to not lose this information we will blast the sequences in NCBI to look for the taxonomy. 
+
+```{r ITS adding missing taxonomy}
+
+tax <- as.data.frame(tax_table(ps_ITS))
+which(is.na(tax$Phylum)) #286 ASVs are NA at Phylum level
+
+Phylum_NA <- rownames(tax)[which(is.na(tax$Phylum))] #get which ones 
+
+#make a copy
+ps_phylum <- ps_ITS 
+
+#add ASV as a column
+tax$ASV <- rownames(ps_phylum@tax_table)  
+#replace in ps 
+tax_table(ps_ITS) <- tax_table(object = as.matrix(tax))
+
+#Now, let's get the sequences
+ps_phylum <- subset_taxa(ps_ITS, ASV %in% Phylum_NA) #ok
+
+#Intermezzo: to get only those that are more abundant (ASV1-100)
+x <- as.data.frame(Phylum_NA)
+number <- separate(x, col=Phylum_NA, into= c("NA", "Number") )
+
+x$Number <- number$Number
+str(x) #ok
+x$Number <- as.numeric(x$Number)
+
+#Get them in order
+x <- x[order(x$Number),]
+
+ASV_sel <- x[c(1:10),] #get top 10 most abundant ones
+ASV_sel <- ASV_sel$Phylum_NA
+ps_sel <- subset_taxa(ps_phylum, ASV %in% ASV_sel)
+
+#save sequences of the most abundant ASVs (ASV 1-170) to blast them in NCBI 
+ps_sel %>%
+refseq() %>%
+Biostrings::writeXStringSet("./Data/amplicon_data/ITS/ITS_sequences_phylum_NA_selection.fna",
+             append=FALSE,compress=FALSE,
+             compression_level=NA, format="fasta")
+
+```
+
+Manually, I blasted the ITS sequencing of the 10 most abundant fungi (below fASV170), the rest I will leave them with unknown taxonomy.
+
+Taxonomy table was filled to the taxonomic level in which there was a consensus on the top 5 hits with more % of identity and highest E value and a query cover of at least 50%.
+
+```{r ITS adding missing taxonomy 2}
+#Make taxonomy table a df so its easier to sort
+tax <- as.data.frame(tax)
+colnames <- colnames(tax)
+
+#get names of taxonomy to write exactly the same ones 
+unique(tax$Phylum)
+sort(unique(tax$Class))
+sort(unique(tax$Order))
+sort(unique(tax$Family))
+sort(unique(tax$Genus))
+sort(unique(tax$Species))
+
+#make one vector from each from the blast of NCBI
+#adding "NCBI" in the confidence column to trace them back if needed 
+
+#f_ASV1
+f_ASV1 <- c("k__Fungi","p__Olpidiomycota","c__Olpidiomycetes","o__Olpidiales","f__Olpidiaceae","g__Olpidium","s__Olpidium_brassicae","NCBI","fASV_1")
+
+#f_ASV27
+f_ASV27 <- c("k__Fungi","p__Mortierellomycota","c__Mortierellomycetes","o__Mortierellales","f__Mortierellaceae",NA,NA,"NCBI","fASV_27")
+
+#f_ASV80
+f_ASV80 <- c("k__Fungi","p__Mortierellomycota","c__Mortierellomycetes","o__Mortierellales","f__Mortierellaceae",NA,NA,"NCBI","fASV_80")
+
+#f_ASV81
+f_ASV81 <- c("k__Fungi","p__Basidiomycota","c__Ustilaginomycetes","o__Ustilaginales",NA,NA,NA,"NCBI","fASV_81")
+
+#f_ASV95
+f_ASV95 <- c("k__Fungi","p__Mortierellomycota","c__Mortierellomycetes","o__Mortierellales","f__Mortierellaceae",NA,NA,"NCBI","fASV_95")
+
+#f_ASV110 <- no hit was above 20% of query, therefore discarded 
+
+#f_ASV143 <- no hit was above 20% of query, therefore discarded 
+
+#f_ASV146
+f_ASV146 <- c("k__Fungi","p__Ascomycota","c__Dothideomycetes","o__Pleosporales","f__Cucurbitariaceae",NA,NA,"NCBI","fASV_146")
+
+#f_ASV168 <- no hit was above 20% of query, therefore discarded 
+
+
+#Now, let's replace this taxonomy information in the ps object
+
+#keep it as taxonomy table (matrix)
+tax <- tax_table(ps_ITS)
+tax[rownames(tax) %in% "fASV_1"] #this is how I get one row from the matrix 
+tax[rownames(tax) %in% "fASV_1"] <- f_ASV1  #this is how I can replace for one thing
+
+#check
+tax[rownames(tax) %in% "fASV_1"] #works!!
+
+#do the same with the rest
+tax[rownames(tax) %in% "fASV_27"] <- f_ASV27 
+tax[rownames(tax) %in% "fASV_80"] <- f_ASV80
+tax[rownames(tax) %in% "fASV_81"] <- f_ASV81
+tax[rownames(tax) %in% "fASV_95"] <- f_ASV95
+tax[rownames(tax) %in% "fASV_146"] <- f_ASV146
+
+#Finally, replace taxonomy table in the ps object 
+tax_table(ps_ITS) <- tax
+
+#clean
+rm(number, ps_phylum, ps_sel, x, f_ASV1, f_ASV27, f_ASV80, f_ASV81, f_ASV95,f_ASV146,
+   tax,ASV_sel,Phylum_NA, post, pre, colnames)
+
+```
+
+##By sample reads & non-informative ASVs
+```{r ITS filtering by sample reads & non-informative ASVs}
+
+#remove blanks
+ps_ITS <- subset_samples(ps_ITS, sample_or_blank != "blank") 
+
+#Filtering by number of reads
+
+#quickly check on the number of reads 
+sort(sample_sums(ps_ITS))
+
+#remove samples with low number of reads, removing those with less than 10,000 reads
+ps_ITS <- subset_samples(ps_ITS, libsize_after_nonFungi > 10000) 
+
+#check number of reads 
+plot(sort(sample_sums(ps_ITS))) #looks a bit better, but still there are two samples with too low reads
+
+#check final sequence lenght. ITS sequences smaller than 100bp should be discarded
+summary(ps_ITS@refseq@ranges@width)  
+sort(ps_ITS@refseq@ranges@width)
+
+ps_ITS<- prune_taxa(taxa = as.data.frame(refseq(ps_ITS)@ranges)$width>100,
+                       x = ps_ITS) #1 ASVs removed
+
+#remove those ASVs which now have 0 reads (after removing samples)
+ps_ITS <- prune_taxa(taxa_sums(ps_ITS ) >0, ps_ITS) #2,278 ASVs
+
+#add new library size after filtering
+ps_ITS@sam_data$libsize_after_filtering <- sample_sums(ps_ITS)
+
+#make new column with the percentage of how many reads were kept 
+ps_ITS@sam_data$pct_reads_kept <- ((ps_ITS@sam_data$libsize_after_filtering/ps_ITS@sam_data$total_reads)*100)
+
+#check
+plot(sort(ps_ITS@sam_data$pct_reads_kept)) #lowest is 63%
+
+#let's keep only those samples from the phytohormone-treated and herbivore-infested experiments 
+ps_ITS <-  subset_samples(ps_ITS, Experiment %in% c("cond_phytohormones", "cond_real_insects"))
+
+#remove those ASVs with now 0 reads 
+prune_taxa(taxa_sums(ps_ITS) >0, ps_ITS) #1,535 taxa
+
+#check
+sample_data(ps_ITS) %>%
+  data.frame() %>%
+  count(Experiment)
+
+
+#get summary info per experiment
+ps_ITS@sam_data %>% 
+                 data.frame() %>% 
+                 group_by(Experiment)%>%
+                 summarise(reads_per_sample = mean(libsize_after_filtering),
+                           stdev=sd(libsize_after_filtering),
+                           reads_kept_perc= mean(pct_reads_kept),
+                           stdev_perc=sd(pct_reads_kept),
+                           n=n())
+
+#get summary info per treatment & experiment [Supplementary Table S3 ITS]
+reads_summary.ITS <- ps_ITS@sam_data %>% 
+                    data.frame() %>% 
+                    group_by(Experiment, plant_pathway_induced)%>%
+                    summarise(reads_per_sample = mean(libsize_after_filtering),
+                           stdev=sd(libsize_after_filtering),
+                           reads_kept_perc= mean(pct_reads_kept),
+                           stdev_perc=sd(pct_reads_kept),
+                           n=n())
+
+```
+
+##Final phyloseq 
+
+Now, we will save a full phyloseq object with both experiments (1) and a splitted ps object by experiment (2).
+```{r ITS final phyloseq}
+
+#First, check filtering steps
+ps_ITS_raw #3,553
+ps_ITS #2,278 in final one 
+
+#1. Now save final full phyloseq 
+save(ps_ITS, file = "./Data/phyloseq_objects/ps_ITS_Full.RData")
+
+#as they come from independent experiments, split the ps object to save the two experiments independently
+ps_ITS_ByExperiment <- phyloseq_sep_variable(ps_ITS, variable=c("Experiment"), drop_zeroes = T)
+
+#2. Save ps object split by experiment 
+save(ps_ITS_ByExperiment, file = "./Data/phyloseq_objects/ps_ITS_ByExperiment.RData")
+
+#Finally remove ITS raw and summary reads 
+rm(ps_ITS_raw, reads_summary.16S, reads_summary.ITS)
+
+```
+
+Finished! now ps objects are ready for analyses. 
