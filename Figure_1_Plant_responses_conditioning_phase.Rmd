@@ -9,7 +9,7 @@ output: html_document
 
 ## Loading packages
 
-```{r loading packages, echo=TRUE}
+```{r loading packages}
 
 #Set working directory to project directory 
 setwd("./")
