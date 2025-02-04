@@ -1,0 +1,87 @@
+DATASET_COLORSTRIP
+SEPARATOR TAB
+DATASET_LABEL	AF1_Experiment
+COLOR	#ff0000
+LEGEND_TITLE	Experiment
+LEGEND_POSITION_X	100
+LEGEND_POSITION_Y	100
+LEGEND_HORIZONTAL	0
+LEGEND_SHAPES	1	1
+LEGEND_COLORS	#d95f02	#1b9e77
+LEGEND_LABELS	Herbivore-induced	Phytohormone-induced
+SHOW_INTERNAL	0
+MARGIN	0
+BORDER_WIDTH	1
+BORDER_COLOR	#000
+STRIP_WIDTH	30
+COLOR_BRANCHES	0
+DATA
+bASV_1158	#336699	phytohormones
+bASV_1158	#336699	phytohormones
+bASV_1699	#336699	phytohormones
+bASV_1699	#336699	phytohormones
+bASV_1079	#996633	insects
+bASV_703	#336699	phytohormones
+bASV_703	#996633	insects
+bASV_5152	#336699	phytohormones
+bASV_891	#336699	phytohormones
+bASV_891	#336699	phytohormones
+bASV_1248	#336699	phytohormones
+bASV_1248	#996633	insects
+bASV_1154	#336699	phytohormones
+bASV_1154	#336699	phytohormones
+bASV_4053	#336699	phytohormones
+bASV_1502	#336699	phytohormones
+bASV_1502	#336699	phytohormones
+bASV_1340	#336699	phytohormones
+bASV_6100	#996633	insects
+bASV_99	#336699	phytohormones
+bASV_99	#336699	phytohormones
+bASV_1627	#336699	phytohormones
+bASV_1627	#996633	insects
+bASV_4091	#336699	phytohormones
+bASV_376	#336699	phytohormones
+bASV_865	#996633	insects
+bASV_962	#336699	phytohormones
+bASV_1268	#336699	phytohormones
+bASV_2249	#996633	insects
+bASV_795	#336699	phytohormones
+bASV_795	#336699	phytohormones
+bASV_2783	#336699	phytohormones
+bASV_2664	#336699	phytohormones
+bASV_1535	#336699	phytohormones
+bASV_1535	#996633	insects
+bASV_2917	#336699	phytohormones
+bASV_2917	#336699	phytohormones
+bASV_1839	#336699	phytohormones
+bASV_1241	#336699	phytohormones
+bASV_1241	#336699	phytohormones
+bASV_38	#336699	phytohormones
+bASV_38	#336699	phytohormones
+bASV_4	#336699	phytohormones
+bASV_4	#336699	phytohormones
+bASV_43	#336699	phytohormones
+bASV_43	#336699	phytohormones
+bASV_902	#336699	phytohormones
+bASV_25	#336699	phytohormones
+bASV_25	#336699	phytohormones
+bASV_3314	#336699	phytohormones
+bASV_3314	#996633	insects
+bASV_4493	#336699	phytohormones
+bASV_4493	#996633	insects
+bASV_388	#336699	phytohormones
+bASV_388	#336699	phytohormones
+bASV_153	#336699	phytohormones
+bASV_153	#996633	insects
+bASV_1557	#336699	phytohormones
+bASV_1557	#996633	insects
+bASV_1061	#336699	phytohormones
+bASV_335	#336699	phytohormones
+bASV_335	#336699	phytohormones
+bASV_1593	#336699	phytohormones
+bASV_997	#336699	phytohormones
+bASV_23	#336699	phytohormones
+bASV_23	#336699	phytohormones
+bASV_923	#336699	phytohormones
+bASV_325	#336699	phytohormones
+bASV_325	#996633	insects

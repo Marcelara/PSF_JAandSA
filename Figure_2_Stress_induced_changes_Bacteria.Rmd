@@ -1,0 +1,1074 @@
+---
+title: "Figure 2: Stress-induced changes in bacterial communities"
+author: "Marcela Aragon"
+date: "2025-02-03"
+output: html_document
+---
+
+#General settings 
+##Loading libraries
+```{r}
+
+#Set working directory to project directory 
+setwd("./")
+getwd() #ok
+
+#microbiome data
+library(phyloseq)
+library(microbiome)
+library(metagMisc)
+library(metagenomeSeq)#CSS normalization
+library(vegan)
+library(ape)
+library(ANCOMBC) # differential abundance with ANCOM
+
+#data handling
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readxl)
+library(purrr) #melts df of lists into a single one
+library(varhandle)
+library(itol.toolkit) #formats into iTOL
+library(stringr) #splits text
+
+#stats
+library(picante) #faith's Phylogenetic Diversity
+library(stats) #stats
+library(DHARMa) #check residuals
+library(lme4) #run glms
+library(fitdistrplus) #checks data distribution
+library(emmeans)
+library(rempsyc) #tables
+library(magrittr) #pipe with emmeans
+library(effectsize)
+library(scales)#rounds p value
+library(umap)
+library(EcolUtils) #pairwise Adonis
+
+#ploting
+library(ggplot2)
+library(viridis)
+library(GGally)
+library(ggpubr)
+library(RColorBrewer) #nice colors for plots
+
+
+```
+
+## Global settings for plots 
+
+```{r settings for plots}
+
+# Setting up white background for plots
+theme_set(theme_bw())
+
+# Set colors for soil_inocula
+color_pathway_induced <- c("#989898", "#E69F00", "#009D64") #control, JA and SA
+color_stress <- c("#BFBFBF", "#E69F00", "#009D64") #same but for UMAP
+color_experiment <- c("#336699", "#996633") #phytohormone-treated and herbivore-infested
+
+# Set default axis looks
+axis_looks <- theme(axis.text.x = element_text(colour = "black", size = 9,
+                                               face = "bold", angle=0, hjust=0.5))+ #text in X
+  theme(axis.text.y = element_text(colour = "black", size = 9, face = "bold"))+ #text in y
+  theme(axis.title=element_text(size=11, face = "bold"))+ #all texts
+  theme(axis.title.y = element_text(margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0)))+
+  theme(panel.grid.major = element_blank(), #no grid
+        panel.grid.minor = element_blank()) #no grid
+  #theme(legend.position="none")+ #no legend
+
+#Get names for boxes in facet wrap
+Experiment_names <- c(
+                    `simulated` = "Phytohormone-treated",
+                    `real_insects` = "Herbivore-infested")
+
+```
+
+#(a)UMAP full 16S community
+##Data
+```{r 16S UMAP; data}
+
+##Loading data
+#16S
+load(file = "./Data/phyloseq_objects/ps_16S_full.RData")
+ps_16S
+
+#16S split by experiment
+load(file = "./Data/phyloseq_objects/ps_16S_ByExperiment.RData")
+ps_16S_ByExperiment
+
+#let's rename it to ps_16S_split to not re-write the code
+ps_16S_split <- ps_16S_ByExperiment
+
+#remove the extra ps
+rm(ps_16S_ByExperiment)
+
+```
+
+```{r UMAP; data filtering}
+
+#let's clean our current ps objects by abundance and prevalence to keep only relevant ASVs for analysis
+
+#Add ASV name in taxonomy table
+t <- as.data.frame(tax_table(ps_16S))
+t$ASV <- rownames(t)
+tax_table(ps_16S) <- tax_table(object = as.matrix(t))
+
+#Add it also to the split ones using lapply to apply the function at the same time to the list of ps objects
+ps_16S_split <- lapply(ps_16S_split, function(ps){ 
+  t <- as.data.frame(tax_table(ps))
+  t$ASV <- rownames(t)
+  tax_table(ps) <- tax_table(object = as.matrix(t))
+  return(ps)
+})
+
+#Apply filtering to remove low prevalence (> 10 samples) and abundant (> 0.001% )ASVs
+#to calculate and plot beta-diversity in the UMAP space
+
+#---- By experiment ----
+asvs_to_keep <- lapply(ps_16S_split, function(ps){
+  
+  ra_ps <- transform_sample_counts(ps, function(x) x/sum(x))#change it to relative abundance
+  ra_f <- filter_taxa(ra_ps, function(x) mean(x) > 0.00001, prune = TRUE)#filter out less than 0.001%
+  p_f <- phyloseq_filter_prevalence(ra_f, prev.trh=0.1, abund.trh=NULL)#filter out not present in <10% samples
+  
+  asvs <- rownames(p_f@otu_table) #get names of ASVs
+  print(length(asvs)) #get how many
+  return(asvs)
+})
+
+#make a copy
+Bac_exp_f <- ps_16S_split
+
+#filter out phyloseq object
+Bac_exp_f$cond_phytohormones <- subset_taxa(ps_16S_split$cond_phytohormones,
+                                            ASV %in% asvs_to_keep$cond_phytohormones)
+
+Bac_exp_f$cond_real_insects <- subset_taxa(ps_16S_split$cond_real_insects,
+                                            ASV %in% asvs_to_keep$cond_real_insects)
+
+#final checks
+Bac_exp_f #ok
+
+#see how many reads were kept
+sum(taxa_sums(Bac_exp_f$cond_phytohormones))/sum(taxa_sums(ps_16S_split$cond_phytohormones)) #88%
+sum(taxa_sums(Bac_exp_f$cond_real_insects))/sum(taxa_sums(ps_16S_split$cond_real_insects)) #91%
+
+#check sparsity 
+summarize_phyloseq(ps_16S)[[6]] #97%
+lapply(ps_16S_split, function(ps) summarize_phyloseq(ps)[[6]])#92
+lapply(Bac_exp_f, function(ps) summarize_phyloseq(ps)[[6]])#65-62, zero-inflation improved with filtering. 
+
+#---- Full ----
+#Get ASVs to keep
+ra_ps <- transform_sample_counts(ps_16S, function(x) x/sum(x))#change it to relative abundance
+ra_f <- filter_taxa(ra_ps, function(x) mean(x) >0.00001, prune = TRUE)#filter out less than 0.0001%
+p_f <- phyloseq_filter_prevalence(ra_f, prev.trh=0.1, abund.trh=NULL)#filter out not present in <10% samples
+asvs <- rownames(p_f@otu_table) #get names of ASVs
+length(asvs) #get how many
+
+#filter out phyloseq object
+ps_Bac_f <- subset_taxa(ps_16S, ASV %in% asvs)
+
+#checks
+#see how many reads were kept
+sum(taxa_sums(ps_Bac_f))/sum(taxa_sums(ps_16S)) #87%
+
+#check sparsity 
+summarize_phyloseq(ps_16S)[[6]] #97%
+summarize_phyloseq(ps_Bac_f)[[6]] #64%, improved.
+
+#clean
+rm(asvs_to_keep, ra_ps, ra_f, p_f, asvs,t)
+
+```
+
+Now, let's normalize using cumulative-sum scaling (CSS)
+```{r UMAP; CSS normalization}
+
+#for ps split by experiment
+Bac_CSS <- lapply(Bac_exp_f, function(ps){phyloseq_transform_css(ps)})
+lapply(Bac_CSS, function(ps){head(otu_table(ps))}) #ok
+
+#same for single ps
+ps_Bac_css <- phyloseq_transform_css(ps_Bac_f)
+head(otu_table(ps_Bac_css))#ok
+
+```
+
+With normalized CSS-transformed ps object now you can calculate distances 
+```{r UMAP; distance matrix}
+
+#---- Full ----
+#first re-root tree otherwise calculating UniFrac distances is a problem (https://github.com/joey711/phyloseq/issues/936)
+ps_Bac_css@phy_tree <- ape::multi2di(ps_Bac_css@phy_tree) 
+
+#Calculate unifrac distances 
+uni_full <- phyloseq::distance(ps_Bac_css, "unifrac") 
+
+#Calculate bray-curtis distances [not used]
+bray_full <- phyloseq::distance(ps_Bac_css, "bray")
+
+
+#---- By experiment ----
+# first fix tree
+Bac_CSS <- lapply(Bac_CSS, function(ps){
+  tree <- ps@phy_tree
+  tree2 <- ape::multi2di(tree)
+  ps@phy_tree <- tree2
+  return(ps)
+}) #replace tree for the fixed one
+
+#Now, run unifrac distances
+uni <- lapply(Bac_CSS, function(ps){ phyloseq::distance(ps, "unifrac")}) #ok
+
+#Bray-Curtis [not used]
+bray <- lapply(Bac_CSS, function(ps){ phyloseq::distance(ps, "bray")})
+
+#Phyloseq by Experiment ps will be ploted and analyzed in (b), for now we focus on the full community (ps_Bac_css).
+```
+
+##Plot
+
+```{r UMAP; ploting}
+
+#make a list of the 2 distances to use lapply later
+dist <- list(bray=bray_full, uni=uni_full) 
+
+#First get a short version of sample data df to be used as metadata for UMAP
+df_info_16S <- sample_data(ps_16S) %>% 
+               data.frame() %>% 
+               dplyr::select(Experiment, plant_pathway_induced)%>%
+               mutate(sample_name=rownames(.))%>%
+               filter(Experiment %in% c("cond_real_insects", "cond_phytohormones"))
+
+#call function to calculate UMAP coordenates
+get_UMAP_coordenates <- function(x){
+  
+  #dist is a list of distances previously calculated
+  set.seed(123)
+  umap <- umap(as.matrix(x))
+  umap_scores <- as.data.frame(umap$layout)
+  colnames(umap_scores) <- c("UMAP1", "UMAP2")
+  umap_scores$sample_name <- rownames(umap_scores)
+  umap_scores <- umap_scores %>% relocate(sample_name)
+  return(umap_scores)
+    
+}
+
+#get coordinates from dist list
+df_UMAP <- lapply(dist, function(x){ get_UMAP_coordenates(x)})
+
+#Now merge it with df 
+df_UMAP <- lapply(df_UMAP, function(df){
+  x <- left_join(df, df_info_16S, by="sample_name")
+  x <- x %>% relocate(sample_name, Experiment, plant_pathway_induced)
+})
+
+#call function to plot the UMAP
+plot_UMAP <- function(x){
+  #x is df 
+  #title is the name of the title in between ""
+  set.seed(123)
+  p <- ggplot(x, aes(x=UMAP1,y=UMAP2, color=plant_pathway_induced)) +
+  geom_point(aes(color=plant_pathway_induced, shape=Experiment),
+             size=4, alpha=0.85)+ # individual sample values
+  #coord_fixed()+ # same axis scaling
+  scale_color_manual(values=color_stress)+
+  #ggtitle(title)+
+  axis_looks+
+  theme(legend.position="none")
+  
+  return(p)
+}
+
+#Plot it
+u.uni <- plot_UMAP(df_UMAP$uni)
+
+#check
+u.uni
+
+```
+
+##Stats
+```{r UMAP; stats}
+
+#I need this to test both experiments together 
+ps_Bac_css
+df_info_16S
+
+#Is there a difference between the bacterial communities among types of induction (Experiment) and stress treatments?
+set.seed(234)
+perm_full_uni <- adonis2(formula=distance(ps_Bac_css, "unifrac") 
+                          ~ Experiment + plant_pathway_induced,
+                     data=as(sample_data(ps_Bac_css), "data.frame"),
+                     permutations = 999, by="margin") #no, but barely (P=0.071)
+
+#No pairwise post-hoc
+
+```
+
+#(b)UMAP by Experiment
+##Data
+```{r UMAP split; data}
+
+#data was already obtained in (a), to plot Unifrac distances independently by experiment we need;
+Bac_CSS #ps object CSS-transformed and split by Experiment 
+bray #Bray-curtis distance matrix calculated by Experiment 
+uni #Unifrac distance matrix calculated by Experiment 
+
+#let's put it into a list per experiment so the functions work
+dist_phyto <- list(bray=bray$cond_phytohormones, uni=uni$cond_phytohormones)
+dist_insects <- list(bray=bray$cond_real_insects, uni=uni$cond_real_insects) 
+
+#let's also get each experiment in a single ps object 
+phyto <- Bac_CSS$cond_phytohormones
+insects <-Bac_CSS$cond_real_insects
+  
+```
+
+##Plot
+```{r UMAP split; plot Phytohormone-treated}
+
+#---- Phytohormone-treated ----
+#We need
+phyto #ps object
+dist_phyto #list with distance matrices
+df_info_16S #metadata df 
+
+#get UMAP coordinates
+df_UMAP <- lapply(dist_phyto, function(x){ get_UMAP_coordenates(x)})
+
+#Now merge it with df 
+df_UMAP <- lapply(df_UMAP, function(df){
+  x <- left_join(df, df_info_16S, by="sample_name")
+  x <- x %>% relocate(sample_name, Experiment, plant_pathway_induced)
+})
+
+#calculate centroids 
+centroids_UMAP <- lapply(df_UMAP, function(df){
+  aggregate(cbind(UMAP1, UMAP2) ~ plant_pathway_induced, data=df, FUN=mean)})
+
+#calculate segments
+s.uni <- merge(df_UMAP$uni,centroids_UMAP$uni, by.x="plant_pathway_induced", by.y="plant_pathway_induced",
+        suffixes=c("","_centroid"))
+
+#call function to plot UMAP with centroids and segments
+plot_UMAP <- function(x,y,z,title){
+  #x is df 
+  #y is the centroid df
+  #z is segment df
+  #title is the name of the title in between ""
+  
+  p <- ggplot(x, aes(x=UMAP1,y=UMAP2, color=plant_pathway_induced)) +
+  geom_segment(data = z, # spiders
+               mapping = aes(x=UMAP1, y=UMAP2, 
+                             xend = UMAP1_centroid, yend = UMAP2_centroid),
+               linewidth=0.3) + 
+  geom_point(size=1.5)+ # individual sample values
+  geom_point(data = y, size = 6, alpha=0.9) + # centroids
+  #coord_fixed()+ # same axis scaling
+  scale_color_manual(values=color_stress)+
+    #ggtitle(title)+
+  axis_looks+
+  theme(legend.position="none")
+  return(p)
+}
+
+#Plot it
+u.uni.phyto <- plot_UMAP(df_UMAP$uni, centroids_UMAP$uni, s.uni, "Unifrac")
+
+#check
+u.uni.phyto
+
+```
+
+```{r UMAP split; Plot Herbivore-infested}
+
+#---- Herbivore-infested ----
+#We need
+insects #ps object
+dist_insects #list with distance matrices
+df_info_16S #metadata df 
+
+#get UMAP coordinates
+df_UMAP <- lapply(dist_insects, function(x){ get_UMAP_coordenates(x)})
+
+#Now merge it with df 
+df_UMAP <- lapply(df_UMAP, function(df){
+  x <- left_join(df, df_info_16S, by="sample_name")
+  x <- x %>% relocate(sample_name, Experiment, plant_pathway_induced)
+})
+
+#calculate centroids 
+centroids_UMAP <- lapply(df_UMAP, function(df){
+  aggregate(cbind(UMAP1, UMAP2) ~ plant_pathway_induced, data=df, FUN=mean)})
+
+#calculate segments
+s.uni <- merge(df_UMAP$uni,centroids_UMAP$uni, by.x="plant_pathway_induced", by.y="plant_pathway_induced",
+        suffixes=c("","_centroid"))
+
+#Plot it
+u.uni.insects <- plot_UMAP(df_UMAP$uni, centroids_UMAP$uni, s.uni, "Unifrac")
+
+#check
+u.uni.insects
+
+```
+
+##Stats
+```{r UMAP split; stats}
+
+#I need this to test both experiments independently
+Bac_CSS
+
+#Is there a difference between bacterial communities among treatments in each experiment?
+set.seed(123)
+
+#Unifrac
+perm_Byexp_uni <- lapply(Bac_CSS, function(ps){
+          set.seed(123)
+          perm <- adonis2(formula=phyloseq::distance(ps, "unifrac") 
+                          ~ plant_pathway_induced,
+                     data=as(sample_data(ps), "data.frame"),
+                     permutations = 999, by="margin")
+          perm <- perm %>% rownames_to_column("factor")
+          return(perm)
+          })
+
+#check
+perm_Byexp_uni
+
+```
+
+clean up a bit before continuing to (c)
+```{r}
+#make list of objects to keep
+keep_objects <- c("color_experiment", "color_pathway_induced", "color_stress", "Experiment_names", "ps_16S", "ps_16S_split")
+
+#Remove everything except specified objects
+rm(list = setdiff(ls(), keep_objects))
+
+```
+
+#(c)Stress-responsive ASVs
+In here we will calculate differentially abundant (DA) ASVs with ANCOMBC as well as their log-fold change respect to control. This information and other metadata will be converted into text files to be used as input for iTOL visualization. 
+
+##Data/Stats
+```{r Responsive ASVs; ANCOMBC}
+
+ps_16S_split #original ps object split by Experiment
+
+#Now, run ANCOMBC in each experiment independently using lapply (it will take a while)
+ancom_16S <- lapply(ps_16S_split, function(ps){
+  set.seed(123)
+  ANCOMBC::ancombc(phyloseq = ps, 
+                      formula = "plant_pathway_induced", 
+                      p_adj_method = "fdr", #same as "BH" Benjamini & Hochberg
+                      prv_cut = 0.20, #keep only those ASVs present in at least 20% of the samples
+                      group = "plant_pathway_induced", 
+                      struc_zero = TRUE, #with structural zero's
+                      neg_lb = FALSE, #classifies structural zero's if it's zero and not its asymptotic lower bound 
+                      tol = 1e-5,               
+                      max_iter = 100, 
+                      conserve = TRUE, #conservative variance of the test statistics 
+                      alpha = 0.05,
+                      verbose=TRUE,
+                      global=FALSE)})
+
+#change name to not repeat the code
+ancom <- ancom_16S
+
+#get results
+head(ancom$cond_phytohormones$feature_table)
+
+#check
+lapply(ancom, function(ancom_result){head(ancom_result$res$lfc)})#LFC
+lapply(ancom, function(ancom_result){head(ancom_result$res$se)})#standard error
+lapply(ancom, function(ancom_result){head(ancom_result$res$W)}) #test statistic LFC/se
+
+#get sample fractions
+samp_frac <- lapply(ancom, function(ancom_result){ancom_result$samp_frac})#ancom$samp_frac
+
+# Get log transformed counts and add pseudo-count (1) to feature table to avoid taking the log of 0
+log_obs_abn <-lapply(ancom, function(ancom_result){log(ancom_result$feature_table +1)})
+
+# Adjust the log observed abundances with the sample fraction
+log_corr_abn <-mapply(function(x,y){
+                     t(t(x) - y)},
+                     x=log_obs_abn,
+                     y=samp_frac)
+  
+#Results
+log_corr_abn #bias-corrected log abundances
+lfc <- lapply(ancom, function(ancom_result){ancom_result$res$lfc}) #log-fold change according to control 
+se_lfc <- lapply(ancom, function(ancom_result){ancom_result$res$se}) #standard error of log-fold change
+
+#get significant ASVs, keep this to make Venn Diagrams
+JA_asvs <- lapply(ancom, function(ancom_result){
+           asvs <- ancom_result$res$diff_abn %>%
+            dplyr::filter(plant_pathway_inducedJA == TRUE) #26,12,8
+           asvs$ASV <- asvs$taxon
+           return(asvs)})
+
+SA_asvs <- lapply(ancom, function(ancom_result){
+           asvs <- ancom_result$res$diff_abn %>%
+            dplyr::filter(plant_pathway_inducedSA == TRUE) #9,4,10
+           asvs$ASV <- asvs$taxon
+           return(asvs)})
+
+#Now I need to get the unique names 
+sig_asvs <- mapply(function(x,y){
+  c(x$ASV, y$ASV)},
+  x=JA_asvs,
+  y=SA_asvs)
+
+#make it into a dataframe format
+sig_asvs <- lapply(sig_asvs, function(x){
+   unique <- unique(x)
+   unique <- as.data.frame(unique)
+   colnames(unique) <- "ASV"
+   return(unique)})  
+
+#With this I can slice the different data frames to plot them
+
+#1.bias-corrected abundances
+log_corr_abn_sig <- mapply(function(x,y){x[y$ASV,]},
+  x=log_corr_abn,
+  y=sig_asvs) #works because its a matrix 
+
+#2.log-fold change vs controls
+lfc_sig <- mapply(function(x,y){x[x$taxon %in% y$ASV,]},
+                  x=lfc,
+                  y=sig_asvs,
+                  SIMPLIFY = FALSE) #to keep it as a list and not a single thing
+
+#3.Differential abundance according to stress 
+dif_abun_stress_sig <- mapply(function(x,y){x$res$diff_abn[x$res$diff_abn$taxon %in% y$ASV,]},
+                           x=ancom,
+                           y=sig_asvs,
+                           SIMPLIFY = FALSE) 
+
+#place ASV as rowname to avoid mistakes later
+dif_abun_stress_sig <- lapply(dif_abun_stress_sig, function(df){
+  rownames(df) <- df$taxon
+  df <- df[,3:4]
+  return(df)
+})
+
+```
+
+```{r Responsive ASVs; Saving results per Experiment}
+
+#---- Phytohormone-treated ----
+ancom$cond_phytohormones #ancom results
+lfc$cond_phytohormones  #lfc values  
+asvs <- sig_asvs$cond_phytohormones$ASV #vector with ASV names 
+dif_abun_stress_sig$cond_phytohormones #contains whether TRUE or FALSE for JA and SA 
+log_corr_abn_sig$cond_phytohormones #corrected abundances of DA ASVs
+#make new ps with only the DA asvs
+ps_DA <- phyloseq::prune_taxa(asvs, ps_16S_split$cond_phytohormones) #ps pruned to only those sig in Phyto Experiment.
+
+#make it into a list to handle it easier
+phyto_dataDA <- list (ancom_test=ancom$cond_phytohormones, lfc=lfc$cond_phytohormones, sig_asvs=asvs,
+                    binary_stress=dif_abun_stress_sig$cond_phytohormones,
+                    log_corr_abn=log_corr_abn_sig$cond_phytohormones,
+                    ps=ps_DA)
+
+#save it, to not run everything again 
+save(phyto_dataDA, file="./R_results/Fig_2_Stress_induced_changes_Bacteria/phyto_dataDA.RData")
+
+#---- Insect-infested ----
+ancom$cond_real_insects
+lfc$cond_real_insects  
+asvs_i <- sig_asvs$cond_real_insects$ASV  
+dif_abun_stress_sig$cond_real_insects 
+log_corr_abn_sig$cond_real_insects 
+#make new ps with only the DA asvs
+ps_DA_i <- phyloseq::prune_taxa(asvs_i, ps_16S_split$cond_real_insects) #ps pruned to only those sig in Phyto Experiment.
+
+#make it into a list to handle it easier
+insects_dataDA <- list (ancom_test=ancom$cond_real_insects, lfc=lfc$cond_real_insects  , sig_asvs=asvs_i,
+                    binary_stress=dif_abun_stress_sig$cond_real_insects,
+                    log_corr_abn=log_corr_abn_sig$cond_real_insects,
+                    ps=ps_DA_i)
+
+#save it, to not run everything again 
+save(insects_dataDA, file="./R_results/Fig_2_Stress_induced_changes_Bacteria/insects_dataDA.RData")
+
+
+```
+
+
+##iTOL figure
+
+###Microbial phylogenetic tree
+In this case the figure was made with iTOL, and now we are going to make dataframes so they can be imported and visualized in iTOL. 
+
+```{r Responsive ASVs; Sequences for new tree}
+
+#We will need:
+ps_16S
+phyto_dataDA
+insects_dataDA
+
+#check name of ASVs to prune a ps 
+p <- rownames(phyto_dataDA$ps@tax_table)
+i <- rownames(insects_dataDA$ps@tax_table)
+
+intersect(p,i) #no
+asvs <- c(p,i)
+asvs <- unique(asvs) #44
+
+#First, let's get the tree by pruning the original ps_16 with DA ASVs
+#make ps with DA asvs
+ps_DA <- prune_taxa(asvs, ps_16S) #44 taxa, ok!
+ps_DA@phy_tree
+plot(ps_DA@phy_tree) #this is the default tree
+
+#Now, let's get the sequences to make a new tree as the default one with DADA2 is not great
+#get the sequences and save them as FASTA format
+ps_DA %>%
+refseq() %>%
+Biostrings::writeXStringSet("./R_results/Fig_2_Stress_induced_changes_Bacteria/selected_asvs.fna",
+             append=FALSE,compress=FALSE,
+             compression_level=NA, format="fasta")
+```
+
+The annotated tree in iTOL looks great, except the phylogeny seem to be not super good. Thus a recommendation from Chrats Melkonian and Melissa Uribe was to build again the microbial phylogeny. For this, the sequences from the selected_asvs were used to build a new phylogenetic tree using MAFFT, Guidance2 and ModelFinder.  
+
+```{r Responsive ASVs; load new phylogenetic tree}
+#Load new phylogenetic tree 
+new_tree <- read.tree("./R_results/Fig_2_Stress_induced_changes_Bacteria/16S_DA_tree_IQTREE.tre")
+new_tree <- ape::multi2di(new_tree) #root it
+plot(new_tree)
+
+#change tree in the ps object
+#copy ps 
+ps_DA_tree <- ps_DA
+
+#change it for new
+ps_DA_tree@phy_tree <- new_tree
+
+#compare it
+plot(ps_DA@phy_tree)
+plot(ps_DA_tree@phy_tree) #this new tree is rooted 
+
+#save it, this is the one to be used in iTOL
+ape::write.tree(new_tree, "./R_results/Fig_2_Stress_induced_changes_Bacteria/16S_DA_tree_IQTREE_rooted.tre")
+
+#call it again
+Bac_tree <- ps_DA@phy_tree
+
+#clean
+rm(ps_DA_tree)
+
+```
+
+###Full dataframe
+Now that the tree is ready, first make a dataframe with all the info needed.
+```{r Responsive ASVs; iTOL complete dataframe}
+
+##let's get D1:Experiment
+df.p <- as.data.frame(p) %>% 
+         mutate(Phytohormones= "phytohormones")%>%
+         mutate(Experiment="phytohormones")  
+colnames(df.p)[1] <-  "id"
+  
+df.i <- as.data.frame(i)%>% 
+         mutate(Insects= "insects")%>%
+         mutate(Experiment="insects") 
+colnames(df.i)[1] <-  "id"
+
+#merge
+df_experiment <- full_join(df.p, df.i)
+
+#get order
+order_asvs <- df_experiment$id
+
+#Now, let's get D2:LFC
+#get LFC values from both experiments in a single df 
+lfc_phyto <- phyto_dataDA$lfc %>%  mutate(Phytohormones= "phytohormones") 
+lfc_phyto <- lfc_phyto[,c(1,3:5)] #remove intercept
+colnames(lfc_phyto) <- c("id", "lfc_JA_phyto", "lfc_SA_phyto", "Phytohormones")                              
+
+lfc_insects <- insects_dataDA$lfc %>%  mutate(Insects= "insects")
+lfc_insects <- lfc_insects[,c(1,3:5)]
+colnames(lfc_insects) <- c("id", "lfc_JA_insects", "lfc_SA_insects", "Insects")  
+
+#merge
+df_lfc <- full_join(lfc_phyto, lfc_insects)
+
+#Next, let's get D3:Treatment
+#phyto
+bin_phyto <- phyto_dataDA$binary_stress %>% rownames_to_column(var="id") %>% mutate(Phytohormones="phytohormones")
+colnames(bin_phyto) <- c("id","DA_JA_phyto", "DA_SA_phyto", "Phytohormones")
+bin_phyto <- bin_phyto %>% mutate(DA_JA_phyto = case_when(DA_JA_phyto == TRUE ~ "YES",
+                                DA_JA_phyto == FALSE ~ "NO")) %>% 
+                              mutate(DA_SA_phyto = case_when(DA_SA_phyto == TRUE ~ "YES",
+                                DA_SA_phyto == FALSE ~ "NO"))
+bin_phyto <- bin_phyto %>%
+                mutate(DA_phyto = case_when(
+                  DA_JA_phyto == "YES" & DA_SA_phyto == "NO" ~ "JA_Only",
+                  DA_JA_phyto == "NO" & DA_SA_phyto == "YES" ~ "SA_Only",
+                  DA_JA_phyto == "YES" & DA_SA_phyto == "YES" ~ "JA_and_SA")) #works
+
+#insects
+bin_insects <- insects_dataDA$binary_stress %>% rownames_to_column(var="id") %>% mutate(Insects="insects")
+colnames(bin_insects) <- c("id","DA_JA_insects", "DA_SA_insects", "Insects")
+bin_insects <- bin_insects %>% mutate(DA_JA_insects = case_when(DA_JA_insects == TRUE ~ "YES",
+                                DA_JA_insects == FALSE ~ "NO")) %>% 
+                              mutate(DA_SA_insects = case_when(DA_SA_insects == TRUE ~ "YES",
+                                DA_SA_insects == FALSE ~ "NO"))
+bin_insects <- bin_insects %>%
+                mutate(DA_insects = case_when(
+                  DA_JA_insects == "YES" & DA_SA_insects == "NO" ~ "JA_Only",
+                  DA_JA_insects == "NO" & DA_SA_insects == "YES" ~ "SA_Only",
+                  DA_JA_insects == "YES" & DA_SA_insects == "YES" ~ "JA_and_SA")) #works
+  
+#merge
+binary_stress <- full_join(bin_phyto, bin_insects)
+
+#merge to make it complete
+df_complete <- full_join(df_lfc, binary_stress)
+
+#add column with Experiment including Phyto, Insects and both
+df_complete <- df_complete %>% mutate(Experiment=case_when(
+  Phytohormones == "phytohormones" ~ "phytohormones",
+  Insects == "insects" ~ "insects"))
+
+#re-order
+df_complete <- df_complete %>% relocate(id, Experiment, Phytohormones, Insects)
+
+#Finally, let's get taxonomy
+#clean it first
+tax_table(ps_DA)[, colnames(tax_table(ps_DA))] <- gsub(tax_table(ps_DA)[, colnames(tax_table(ps_DA))],     pattern = "[a-z]__", replacement = "")
+#make it a df 
+tax_table <- as.data.frame(ps_DA@tax_table[,c(1:7)]) #select the interesting ones 
+tax_table$id <- rownames(tax_table) #add id column for join 
+
+#merge
+df_complete2 <- left_join(df_complete, tax_table)
+
+```
+
+###Experiment
+Now you can make individual df to be imported into iTOL.
+iTOL has a specific format to add data into the tree, it has to be in a .txt file and in a certain way coded. The package itol.toolkit helps to make an annotation file directly in R. Once the annotation file (AF) is ready you can import it into the iTOL annotator to add metadata to your phylogenetic tree.
+```{r Responsive ASVs; iTOL Experiment}
+
+#color management
+#Set-up colors
+color_JA <- "#E69F00"
+color_SA <- "#009D64"
+color_phyto <- "#336699"
+color_insects <- "#996633"
+
+#Built in colors
+display.brewer.all() #gives you the palettes from RColorBrewer
+
+#create Annotation files with using the itol.toolkit package
+
+#Experiment: together [not used in final figure]
+temp <- df_complete2%>%
+        dplyr::select(c(id,Experiment))
+
+#make df for itol
+AF1 <- itol.toolkit::create_unit(data = temp, 
+                         key = "AF1_Experiment", 
+                         type = "DATASET_COLORSTRIP",
+                         tree = Bac_tree)
+
+#change colors and parameters
+AF1@specific_themes$strip_label$width <- 30 #width of strip
+AF1@specific_themes$strip_label$color_branches <- 0 #no color branches
+AF1@data$tip <- AF1@data$tip %>%  mutate(`AF1_Experiment$COLOR`=case_when( #change colors 
+                                `AF1_Experiment$LABEL`=="phytohormones" ~ color_phyto,
+                                `AF1_Experiment$LABEL`=="insects" ~ color_insects))
+
+
+AF1@common_themes$legend$title <- "Experiment"
+AF1@common_themes$legend$horizontal <- 0
+AF1@common_themes$legend$labels <- c("Herbivore-induced","Phytohormone-induced")
+
+#save
+itol.toolkit::write_unit(AF1, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+```
+
+```{r Responsive ASVs; iTOL Treatment v1}
+
+## Treatment version 1
+df_Treatment <- df_complete2%>%
+                dplyr::select(id,DA_JA_phyto,DA_JA_insects, DA_SA_phyto, DA_SA_insects)%>%
+                relocate(id)
+#replace NA's
+df_Treatment$DA_JA_phyto <- df_Treatment$DA_JA_phyto %>% replace_na('NO')
+df_Treatment$DA_SA_phyto <- df_Treatment$DA_SA_phyto %>% replace_na('NO')
+df_Treatment$DA_JA_insects <- df_Treatment$DA_JA_insects %>% replace_na('NO')
+df_Treatment$DA_SA_insects <- df_Treatment$DA_SA_insects %>% replace_na('NO')
+
+#replace 0's for -1 and Yes for 1 so iTOL recognizes full and empty symbols
+df_Treatment2 <- df_Treatment %>% 
+                mutate(DA_JA_phyto=case_when(DA_JA_phyto== "YES" ~ "1", TRUE ~ "-1")) %>% 
+                mutate(DA_SA_phyto=case_when(DA_SA_phyto== "YES" ~ "1", TRUE ~ "-1")) %>%
+                mutate(DA_JA_insects=case_when(DA_JA_insects== "YES" ~ "1", TRUE ~ "-1")) %>%
+                mutate(DA_SA_insects=case_when(DA_SA_insects== "YES" ~ "1", TRUE ~ "-1"))
+
+## By Experiment
+#Phyto
+Phyto <- df_Treatment2 %>% dplyr::select(id, DA_JA_phyto, DA_SA_phyto)
+AF2.1 <- itol.toolkit::create_unit(data = Phyto, 
+                         key = "AF2.1_Treatment_Phyto", 
+                         type = "DATASET_BINARY",
+                         tree = Bac_tree)
+
+AF2.1@field$labels <- c("JA_phyto",  "SA_phyto")
+AF2.1@field$colors <- c("#E69F00",  "#009D64")
+
+itol.toolkit::write_unit(AF2.1, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+#Insects
+insects <- df_Treatment2 %>% dplyr::select(id, DA_JA_insects, DA_SA_insects)
+AF2.2 <- itol.toolkit::create_unit(data = insects, 
+                         key = "AF2.2_Treatment_insects", 
+                         type = "DATASET_BINARY",
+                         tree = Bac_tree)
+
+AF2.2@field$labels <- c("JA_insects",  "SA_insects")
+AF2.2@field$colors <- c("#E69F00",  "#009D64")
+
+itol.toolkit::write_unit(AF2.2, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+```
+
+Independently
+```{r Responsive ASVs; iTOL Treatment v2}
+
+## Treatment version 2
+##JA
+JA_phyto <- df_Treatment2 %>% dplyr::select(id, DA_JA_phyto)
+AF3.1 <- itol.toolkit::create_unit(data = JA_phyto, 
+                         key = "AF3.1_Treatment_JA_Phyto", 
+                         type = "DATASET_BINARY",
+                         tree = Bac_tree)
+
+AF3.1@field$labels <- "JA_phyto"
+AF3.1@field$colors <- "#E69F00"
+
+itol.toolkit::write_unit(AF3.1, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+JA_insects <- df_Treatment2 %>% dplyr::select(id, DA_JA_insects)
+AF3.2 <- itol.toolkit::create_unit(data = JA_insects, 
+                         key = "AF3.1_Treatment_JA_insects", 
+                         type = "DATASET_BINARY",
+                         tree = Bac_tree)
+
+AF3.2@field$labels <- "JA_insects"
+AF3.2@field$colors <- "#E69F00"
+
+itol.toolkit::write_unit(AF3.2, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+##SA
+SA_phyto <- df_Treatment2 %>% dplyr::select(id, DA_SA_phyto)
+AF3.3 <- itol.toolkit::create_unit(data = SA_phyto, 
+                         key = "AF3.3_Treatment_SA_Phyto", 
+                         type = "DATASET_BINARY",
+                         tree = Bac_tree)
+
+AF3.3@field$labels <- "SA_phyto"
+AF3.3@field$colors <- "#009D64"
+
+itol.toolkit::write_unit(AF3.3, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+SA_insects <- df_Treatment2 %>% dplyr::select(id, DA_SA_insects)
+AF3.4 <- itol.toolkit::create_unit(data = SA_insects, 
+                         key = "AF3.4_Treatment_SA_insects", 
+                         type = "DATASET_BINARY",
+                         tree = Bac_tree)
+
+AF3.4@field$labels <- "SA_insects"
+AF3.4@field$colors <- "#009D64"
+
+itol.toolkit::write_unit(AF3.4, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+```
+
+### LFC
+```{r Responsive ASVs; iTOL LFC}
+
+## LFC dataset
+df_LFC <- df_complete2%>%
+                dplyr::select(id,lfc_JA_phyto, lfc_JA_insects, lfc_SA_phyto, lfc_SA_insects)%>%
+                relocate(id)%>%
+                as.tibble()
+#let's round up
+df_LFC <- df_LFC %>% 
+          dplyr::mutate(across(where(is.numeric), round, 2))
+
+#First, lets make a single df 
+df_LFC_unique <- full_join(df_Treatment,df_LFC)
+#Now let's apply some rules
+df_LFC_unique <- df_LFC_unique %>%
+                  mutate(lfc_JA_phyto=
+                           case_when(DA_JA_phyto == "NO" ~ NA, TRUE ~ lfc_JA_phyto))%>% 
+                  mutate(lfc_SA_phyto=
+                           case_when(DA_SA_phyto == "NO" ~ NA, TRUE ~ lfc_SA_phyto))%>% 
+                  mutate(lfc_JA_insects=
+                           case_when(DA_JA_insects == "NO" ~ NA, TRUE ~ lfc_JA_insects))%>% 
+                  mutate(lfc_SA_insects=
+                           case_when(DA_SA_insects == "NO" ~ NA, TRUE ~ lfc_SA_insects))
+
+#---- Phytohormone-treated ----
+Phyto <-  df_LFC_unique %>% dplyr::select(id, lfc_JA_phyto, lfc_SA_phyto)
+
+#get Annotation File for Heatmap
+AF4.1 <- itol.toolkit::create_unit(data = Phyto , 
+                         key = "AF4.1_LFC_Heatmap_Phyto", 
+                         type = "DATASET_HEATMAP",
+                         tree = Bac_tree)  #works
+
+AF4.1@data$tip[AF4.1@data$tip == 0] <- NA
+
+#choose colors
+min <-"#D6604D"
+max <- "#4393C3"
+
+#select colors 
+AF4.1@specific_themes$heatmap$color$min <- min
+AF4.1@specific_themes$heatmap$color$max <- max
+AF4.1@specific_themes$heatmap$color$mid <- "#ebeceb"
+AF4.1@specific_themes$heatmap$value$mid <- 0
+AF4.1@specific_themes$heatmap$color$nan <- "#FFFFFF"
+
+#change range so the colors mean the same across experiment and treatment
+AF4.1@specific_themes$heatmap$value$max <- 2.75
+AF4.1@specific_themes$heatmap$value$min <- -2.55
+AF4.1@specific_themes$heatmap$value$mid <- 0
+
+AF4.1@specific_themes$heatmap$tree$tree_display <- 0 #no display of tree in heatmap
+
+itol.toolkit::write_unit(AF4.1, "./R_results/Fig_2_Stress_induced_changes_Bacteria") #works
+
+#---- Insect-Infested ----
+Insects <-  df_LFC_unique %>% dplyr::select(id, lfc_JA_insects, lfc_SA_insects)
+
+#get Annotation File for Heatmap
+AF4.2 <- itol.toolkit::create_unit(data = Insects , 
+                         key = "AF4.2_LFC_Heatmap_Insects", 
+                         type = "DATASET_HEATMAP",
+                         tree = Bac_tree)  #works
+
+AF4.2@data$tip[AF4.2@data$tip == 0] <- NA
+
+#select colors 
+AF4.2@specific_themes$heatmap$color$min <- min
+AF4.2@specific_themes$heatmap$color$max <- max
+AF4.2@specific_themes$heatmap$color$mid <- "#ebeceb"
+AF4.2@specific_themes$heatmap$value$mid <- 0
+AF4.2@specific_themes$heatmap$color$nan <- "#FFFFFF"
+
+#change range so the colors mean the same across experiment and treatment
+AF4.2@specific_themes$heatmap$value$max <- 2.75
+AF4.2@specific_themes$heatmap$value$min <- -2.55
+AF4.2@specific_themes$heatmap$value$mid <- 0
+
+AF4.2@specific_themes$heatmap$tree$tree_display <- 0 #no display of tree in heatmap
+
+itol.toolkit::write_unit(AF4.2, "./R_results/Fig_2_Stress_induced_changes_Bacteria") #works
+
+```
+
+###Taxonomy
+```{r Responsive ASVs; iTOL LFC}
+
+#first, let's change it for Family labels [not used in final Figure]
+#Family
+df_labels_F <- df_complete2 %>%
+               dplyr::select(id, Family)
+
+AF5 <- create_unit(data = df_labels_F,
+                       key = "AF5_label_Family",
+                       type = "LABELS",
+                       tree = Bac_tree)
+
+itol.toolkit::write_unit(AF5, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+
+#Genus
+df_labels_G <- df_complete2 %>%
+               dplyr::select(id, Genus)
+
+#replace Genus names with names of ASV and add number to Genus so its clear that it's different ASVs
+df_labels_G <- df_labels_G %>% mutate(number=str_split_i(df_labels_G$id, "_", 2))%>% #get number of ASV
+                                mutate(Genus=paste(.$Genus, .$number, sep= "-"))%>% #make new with number and genus
+                                mutate(Genus=gsub("NA", "fASV", .$Genus))%>%
+                                dplyr::select(-number) #ok
+                                      
+AF6 <- create_unit(data = df_labels_G,
+                       key = "AF6_label_Genus",
+                       type = "LABELS",
+                       tree = Bac_tree)
+
+itol.toolkit::write_unit(AF6, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+
+#Make a range df for Phylum now
+df_Phylum <- df_complete2 %>%
+               dplyr::select(id, Phylum, Class)
+
+#make special category for Proteobacteria to include Class
+df_Phylum <- df_Phylum %>% mutate(Phylum=case_when(
+                          Class==" Alphaproteobacteria" ~ " Alphaproteobacteria",
+                          Class == " Gammaproteobacteria" ~ " Gammaproteobacteria",
+                          TRUE ~ Phylum))
+
+#make a vector with colors 
+Phylum <- unique(df_Phylum$Phylum) #11
+Phylum <- sort(Phylum)
+color_phylum <- c("#FDB462","#8DD3C7","#FFFFB3", "#FB8072","#80B1D3","#8DD3D2",
+                  "#FCCDE5", "#BC80BD","#BEBADA", "#B3DE69", "#CCEBC5")
+
+#make it a df
+df_phyla_col <- data.frame(Phylum, color_phylum)
+
+#merge with df_Phylum
+df_Phylum <- df_Phylum%>%
+             dplyr::select(-Class) %>% 
+             dplyr::inner_join(df_phyla_col)
+
+AF7 <- create_unit(data = df_Phylum, 
+                      key = "AF7_Phylum_colors", 
+                      type = "TREE_COLORS", 
+                      subtype = "range",
+                      tree = Bac_tree)
+
+itol.toolkit::write_unit(AF7, "./R_results/Fig_2_Stress_induced_changes_Bacteria")
+
+```
+
+Now, import the tree and the df's into iTOL to visualize it.
+
+#(d)Venn-Diagrams
+
+Proportional Venn Diagrams were made with the online tool from the nVenn package (https://degradome.uniovi.es/cgi-bin/nVenn/nvenn.cgi) for this you just need to copy-paste the list of ASVs responsive to JA or SA in each experiment and download the .svg figure.
+
+##Data
+```{r venn diagrams}
+
+#----Phytohormone-treated ----
+JA_asvs$cond_phytohormones$ASV #Group 1
+SA_asvs$cond_phytohormones$ASV #Group 2
+
+#---- Herbivore-infested ----
+JA_asvs$cond_real_insects$ASV #Group 3
+SA_asvs$cond_real_insects$ASV #Group 4
+
+```
+
+
+
+
+
+
