@@ -1,0 +1,76 @@
+DATASET_COLORSTRIP
+SEPARATOR TAB
+DATASET_LABEL	AF1_Experiment
+COLOR	#ff0000
+LEGEND_TITLE	Experiment
+LEGEND_POSITION_X	100
+LEGEND_POSITION_Y	100
+LEGEND_HORIZONTAL	0
+LEGEND_SHAPES	1	1	1
+LEGEND_COLORS	#1b9e77	#d95f02	#7570b3
+LEGEND_LABELS	Herbivore-induced	Phytohormone-induced
+SHOW_INTERNAL	0
+MARGIN	0
+BORDER_WIDTH	1
+BORDER_COLOR	#000
+STRIP_WIDTH	30
+COLOR_BRANCHES	0
+DATA
+fASV_238	#336699	phytohormones
+fASV_52	#336699	phytohormones
+fASV_270	#336699	phytohormones
+fASV_75	#989898	both
+fASV_77	#989898	both
+fASV_985	#336699	phytohormones
+fASV_373	#336699	phytohormones
+fASV_1080	#336699	phytohormones
+fASV_90	#336699	phytohormones
+fASV_57	#989898	both
+fASV_80	#989898	both
+fASV_194	#336699	phytohormones
+fASV_22	#989898	both
+fASV_1467	#336699	phytohormones
+fASV_821	#996633	insects
+fASV_49	#336699	phytohormones
+fASV_513	#336699	phytohormones
+fASV_180	#336699	phytohormones
+fASV_221	#996633	insects
+fASV_162	#989898	both
+fASV_15	#989898	both
+fASV_240	#336699	phytohormones
+fASV_195	#989898	both
+fASV_187	#989898	both
+fASV_298	#336699	phytohormones
+fASV_160	#989898	both
+fASV_87	#989898	both
+fASV_215	#336699	phytohormones
+fASV_39	#989898	both
+fASV_532	#336699	phytohormones
+fASV_854	#336699	phytohormones
+fASV_349	#996633	insects
+fASV_1718	#996633	insects
+fASV_125	#989898	both
+fASV_97	#989898	both
+fASV_456	#336699	phytohormones
+fASV_285	#336699	phytohormones
+fASV_961	#336699	phytohormones
+fASV_172	#989898	both
+fASV_446	#336699	phytohormones
+fASV_136	#989898	both
+fASV_128	#336699	phytohormones
+fASV_653	#336699	phytohormones
+fASV_545	#336699	phytohormones
+fASV_1328	#996633	insects
+fASV_515	#336699	phytohormones
+fASV_401	#996633	insects
+fASV_490	#336699	phytohormones
+fASV_333	#336699	phytohormones
+fASV_170	#336699	phytohormones
+fASV_166	#989898	both
+fASV_186	#996633	insects
+fASV_252	#996633	insects
+fASV_135	#336699	phytohormones
+fASV_228	#336699	phytohormones
+fASV_189	#989898	both
+fASV_139	#336699	phytohormones
+fASV_137	#989898	both
