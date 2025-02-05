@@ -1,0 +1,875 @@
+---
+title: "Code for supplementary Figures S3, S4, S5 and S6"
+author: "Marcela Aragon"
+date: "2025-02-04"
+output: html_document
+---
+
+#General Settings
+## Loading packages
+```{r loading packages}
+
+#Set working directory to project directory 
+setwd("./")
+getwd() #ok
+
+#data
+library(knitr)
+library(dplyr)
+library(tibble)
+
+#microbiome
+library(phyloseq)
+library(microbiome)
+library(metagMisc)
+library(vegan)
+library(ape)
+
+#plotting
+library(ggplot2)
+library(patchwork)
+
+#stats
+library(lme4)
+library(lmerTest)
+library(Matrix)
+library(DHARMa)
+library(lmtest)
+library(emmeans)
+library(car)
+library(lsr)
+library(multcompView) #different letters for significance
+library(multcomp)
+library(picante) #faith's Phylogenetic Diversity
+library(magrittr) #pipe with emmeans
+library(scales)#rounds p value
+
+```
+
+## Global settings for plots 
+
+```{r settings for plots}
+
+# Setting up white background for plots
+theme_set(theme_bw())
+
+# Set colors for soil_inocula
+color_pathway_induced <- c("#989898", "#E69F00", "#009D64") #control, JA and SA
+color_stress <- c("#989898", "#E69F00", "#009D64") #control, JA and SA
+color_experiment <- c("#336699", "#996633") #phytohormone-treated and herbivore-infested
+
+# Set default axis looks
+axis_looks <- theme(axis.text.x = element_text(colour = "black", size = 9,
+                                               face = "bold", angle=0, hjust=0.5))+ #text in X
+  theme(axis.text.y = element_text(colour = "black", size = 9, face = "bold"))+ #text in y
+  theme(axis.title=element_text(size=11, face = "bold"))+ #all texts
+  theme(axis.title.y = element_text(margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0)))+
+  theme(panel.grid.major = element_blank(), #no grid
+        panel.grid.minor = element_blank()) #no grid
+  #theme(legend.position="none")+ #no legend
+
+#Get names for boxes in facet wrap
+Experiment_names <- c(
+                    `simulated` = "Phytohormone-treated",
+                    `real_insects` = "Herbivore-infested")
+
+```
+
+
+
+#S3:Individual Endogenous phytohormone levels
+##Data
+```{r S3; Data}
+
+phyto <- readRDS("C:/RProjects/PSF_JAandSA/Data/plant_data/phytohormones.rds")
+
+#change levels of Experiment
+levels(phyto$Experiment)
+levels(phyto$plant_pathway_induced)
+phyto <- phyto %>%
+                mutate(Experiment = factor(Experiment,
+                                           levels = c("simulated", "real_insects" )))%>%
+                mutate(plant_pathway_induced = factor(plant_pathway_induced,
+                                                      levels=c("Control", "JA", "SA")))
+
+#make long format for plotting
+long <- phyto %>% 
+              tidyr::pivot_longer(cols = c(11:18), 
+              names_to = "phytohormone",
+              values_to = "concentration",
+              values_drop_na = TRUE)
+
+#making new phytohormone column as factor
+long$phytohormone <- as.factor(long$phytohormone)
+
+# Reordering downstream the JA pathway
+ordered_hormones <- c("ABA", "SA", "cis_OPDA", "JA", "OH_JA", "sum_JA_Ile", "OH_JA_Ile", "COOH_JA_Ile")
+
+long$phytohormone <-factor(long$phytohormone, 
+                             levels = ordered_hormones)
+
+#subsetting long df to only conditioning
+conditioning_long <- long %>% 
+                filter(Phase == "conditioning")
+
+#subsetting wide df to only conditioning
+conditioning <- phyto %>% 
+                filter(Phase == "conditioning")
+
+#Make a summary df 
+df_phyto <- conditioning_long %>%
+  group_by(Experiment, phytohormone, plant_pathway_induced) %>%
+  summarise(
+    n = n(),
+    mean = mean(concentration, na.rm = TRUE),
+    sd = sd(concentration, na.rm = TRUE)) %>%
+    mutate(se = sd/sqrt(n))
+
+df_phyto
+
+```
+
+Now, let's plot it. I'd like to have a plot with those hormones with high concentrations and then a second plot with a smaller axis for those of low concentrations so differences can be better appreciated.
+
+##Plot
+
+```{r S3; Plot}
+
+big_axis <- c("ABA", "SA", "cis_OPDA", "JA", "OH_JA")
+small_axis <- c("sum_JA_Ile", "OH_JA_Ile","COOH_JA_Ile")
+
+
+# make a barplot for big-axis
+p1 <- ggplot(data = subset(df_phyto, phytohormone %in% big_axis),
+            mapping = aes(x = phytohormone, y = mean), colour= plant_pathway_induced)+
+  geom_bar(aes(fill = plant_pathway_induced), stat = "identity",
+           position = position_dodge(0.8), width = 0.8, color = "black")+
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se, group = plant_pathway_induced),
+                width = 0.2, position = position_dodge(0.8))+
+  scale_fill_manual(values = color_pathway_induced)+
+  geom_point(data = subset(conditioning_long, phytohormone %in% big_axis),
+              mapping = (aes(phytohormone, concentration, fill = plant_pathway_induced)),
+               shape = 21, size = 1.5, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))
+
+p2 <- p1 + facet_wrap(~Experiment, labeller = as_labeller(Experiment_names)) +
+              labs(y="(ng/g DW)", x=" ") +
+              axis_looks +
+              theme(panel.spacing = unit(0.2, "lines"))+
+              theme(legend.position = "none")+
+              scale_x_discrete(labels=c("ABA" = "ABA", "SA" = "SA",
+                                      "cis_OPDA" = "cis-OPDA", "JA" = "JA", "OH_JA" = "OH-JA"))
+p2
+ 
+# make a barplot for small-axis
+p3 <- ggplot(data = subset(df_phyto, phytohormone %in% small_axis),
+            mapping = aes(x = phytohormone, y = mean), colour= plant_pathway_induced)+
+  geom_bar(aes(fill = plant_pathway_induced), stat = "identity",
+           position = position_dodge(0.8), width = 0.8, color = "black")+
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se, group = plant_pathway_induced),
+                width = 0.2, position = position_dodge(0.8))+
+  scale_fill_manual(values = color_pathway_induced)+
+  geom_point(data = subset(conditioning_long, phytohormone %in% small_axis),
+              mapping = (aes(phytohormone, concentration, fill = plant_pathway_induced)),
+               shape = 21, size = 1.5, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))
+
+p4 <- p3 + facet_wrap(~Experiment) +
+            theme(strip.background = element_blank(),
+                  strip.text.x = element_blank())+ #no label on top
+              labs(y="(ng/g DW)", x=" ") +
+              axis_looks +
+              theme(panel.spacing = unit(0.2, "lines"))+
+              theme(legend.position = "none")+
+              scale_x_discrete(labels=c("sum_JA_Ile" = "JA-Ile", "OH_JA_Ile" = "OH-JA-Ile",
+                                      "COOH_JA_Ile" = "COOH-JA-Ile"))
+
+p4
+
+#Final plot
+p2/p4
+
+
+```
+
+
+##Stats
+```{r S3; Stats}
+
+#check data
+str(conditioning_long)
+
+#log-transform it
+conditioning_long$concentration_log <- log(conditioning_long$concentration + 1)  # Add 1 to avoid log(0)
+
+
+#---- Phytohormone-treated ----
+#sub-set to Phytohormone-treated
+p <- conditioning_long %>% filter(Experiment == "simulated") %>% droplevels()
+
+#Run model
+lme_model <- lmer(concentration_log ~ Stress * phytohormone + (1 | ID), data = p)
+
+summary(lme_model)  # View model results
+anova(lme_model)    # Type III ANOVA for fixed effects
+
+# Residual diagnostics
+par(mfrow = c(1, 2))
+qqnorm(residuals(lme_model))
+qqline(residuals(lme_model), col = "red")
+hist(residuals(lme_model), breaks = 20, main = "Residuals")
+
+# Check residuals vs. fitted values
+plot(fitted(lme_model), residuals(lme_model), main = "Residuals vs Fitted")
+abline(h = 0, col = "red")
+
+
+#see post-hoc differences
+posthoc_p <- emmeans(lme_model, pairwise ~ Stress | phytohormone, adjust = "FDR")
+cld(posthoc_p$emmeans, Letters=letters)
+
+#---- Herbivore-infested ----
+#sub-set to Herbivore-infested
+i <- conditioning_long %>% filter(Experiment == "real_insects") %>% droplevels()
+
+#Run model
+lme_model.i <- lmer(concentration_log ~ Stress * phytohormone + (1 | ID), data = i)
+
+summary(lme_model.i)  # View model results
+anova(lme_model.i)    # Type III ANOVA for fixed effects
+
+# Residual diagnostics
+par(mfrow = c(1, 2))
+qqnorm(residuals(lme_model))
+qqline(residuals(lme_model), col = "red")
+hist(residuals(lme_model), breaks = 20, main = "Residuals")
+
+# Check residuals vs. fitted values
+plot(fitted(lme_model), residuals(lme_model), main = "Residuals vs Fitted")
+abline(h = 0, col = "red")
+
+#see post-hoc differences
+posthoc_i <- emmeans(lme_model.i, pairwise ~ Stress | phytohormone, adjust = "FDR")
+cld(posthoc_i$emmeans, Letters=letters)
+
+#clean-up before you continue
+keep_vars <- c("color_experiment", "color_pathway_induced", "color_stress", "axis_looks")#Values to keep
+rm(list = setdiff(ls(), keep_vars))
+
+```
+
+#S4: Alpha-Diversity Bacteria
+##Data
+```{r S4; Data}
+
+#16S split by Experiment
+load(file = "./Data/phyloseq_objects/ps_16S_ByExperiment.RData")
+p16S_exp <- ps_16S_ByExperiment #rename to not change the code
+rm(ps_16S_ByExperiment) #delete to save space
+
+#before calculating alpha diversity, let's scale to the median sequencing depth to normalize the data 
+#to account for differences in library sizes 
+p16S_median <- lapply(p16S_exp, function(ps){
+  total <- median(sample_sums(ps))
+  standf <- function(x, t=total) round(t * (x / sum(x)))
+  physeq_msd = transform_sample_counts(ps, standf)
+  print((sample_sums(physeq_msd)))
+  return(physeq_msd)
+})
+
+#check it
+lapply(p16S_exp , function(ps){ sample_sums(ps)}) #non-normalized
+lapply(p16S_median, function(ps){ sample_sums(ps)}) #better
+
+```
+
+```{r S5; calculate alpha-diversity}
+
+#get Observed, Shannon and Simpson indexes
+richness <- lapply(p16S_median, function(ps){
+  estimate_richness(ps,
+            measures = c("Observed", "Shannon", "Simpson"))
+})
+
+#fix df 
+richness <- lapply(richness, function(df){
+  rownames(df) <- sub("X", "", rownames(df)) #removes X from rownames
+  df$sample_name <- rownames(df) 
+  return(df)
+})
+
+#Get Faith's phylogenetic diversity index
+pd <- lapply(p16S_median, function(ps){
+  pd(t(as.data.frame(ps@otu_table)), ps@phy_tree,include.root=T)
+  })
+
+#merge with metadata of ps object
+richness$cond_phytohormones <- cbind(as.data.frame(sample_data(p16S_median$cond_phytohormones)), richness$cond_phytohormones, pd$cond_phytohormones)
+
+richness$cond_real_insects<- cbind(as.data.frame(sample_data(p16S_median$cond_real_insects)), richness$cond_real_insects, pd$cond_real_insects)
+
+#select the columns needed
+richness <- lapply(richness, function(df){
+  df <- df %>% dplyr::select(c('Experiment',
+                         'plant_pathway_induced',
+                         'Amplicon_concentation_ngul',
+                         'total_reads',
+                         'libsize_after_filtering',
+                         'shoot_biomass',"Observed",
+                         "Shannon", "Simpson", "PD", "sample_name"))
+})
+
+#make another set with long format for plotting
+richness_long <- lapply(richness, function(df){
+  df_long <- reshape2::melt(df)})
+
+```
+
+##Plot
+```{r S4; Plot}
+
+#Just plot Richness (Observed), Shannon and Faith's PD
+estimates <- c("Observed","Shannon", "PD")
+
+#add info for y axis
+limits <- data.frame(
+  variable = c("Observed","Shannon","PD"),
+  y_min = c(0, 4, 50), # Set your desired minimum y-axis limits
+  y_max = c(3000, 8, 180) # Set your desired maximum y-axis limits
+)
+
+#merge
+richness_long_16S_estimates <- lapply(richness_long, function(df){
+  df <- filter(df, variable %in% estimates)
+  df <- df %>% left_join(limits, by="variable")
+  df$variable <- factor(df$variable, levels=c("Observed","Shannon","PD"))
+  return(df)
+  })
+
+
+#Plot Phytohormone-treated
+p.p <- ggplot(richness_long_16S_estimates$cond_phytohormones,
+       aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced))+
+     geom_boxplot(aes(fill = plant_pathway_induced))+
+     geom_jitter(data = richness_long_16S_estimates$cond_phytohormones,
+                 mapping = aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced),
+              shape = 21, size = 1.5, color = "black", alpha=0.5,
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .5))+
+     scale_fill_manual(values=color_stress)+
+  geom_line() +
+  geom_blank(aes(y = y_min)) + # Force the minimum y limit
+  geom_blank(aes(y = y_max)) + # Force the maximum y limit
+  facet_wrap(~ variable, scales = "free_y") +
+  theme(legend.position = "none")+
+    axis_looks
+
+#Plot Herbivore-infested
+p.i <- ggplot(richness_long_16S_estimates$cond_real_insects,
+       aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced))+
+     geom_boxplot(aes(fill = plant_pathway_induced))+
+     geom_jitter(data = richness_long_16S_estimates$cond_real_insects,
+                 mapping = aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced),
+              shape = 21, size = 1.5, color = "black", alpha=0.5,
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .5))+
+     scale_fill_manual(values=color_stress)+
+  geom_line() +
+  geom_blank(aes(y = y_min)) + # Force the minimum y limit
+  geom_blank(aes(y = y_max)) + # Force the maximum y limit
+  facet_wrap(~ variable, scales = "free_y") +
+  theme(legend.position = "none")+
+    axis_looks
+
+#final plot
+p.p / p.i
+
+```
+
+##Stats
+```{r S4; Stats}
+
+#---- Observed/Richness ----
+obs <- lapply(richness, function(df){
+        glm(df$Observed ~ plant_pathway_induced,
+                data=df,
+                family=Gamma(link="log"))})#changed to glm with quasipoisson distribution
+
+obs.table <- lapply(obs, function(model){
+  car::Anova(model, type="III", test.statistic="F")#using type III, as its unbalanced
+})
+
+#check if assumptions are met
+lapply(obs, function(model){simulateResiduals(model, plot=T)}) #ok
+
+obs.table #not significant
+
+#---- Shannon ----
+shann <- lapply(richness, function(df){
+          lm(log(df$Shannon) ~ plant_pathway_induced,
+                data=df)})
+
+shann.table <- lapply(shann, function(model){
+  car::Anova(model, type="III", test.statistic="F")#using type III, as its unbalanced
+})
+
+shann.table #both not significant
+
+#check if assumptions are met
+lapply(shann, function(model){simulateResiduals(model, plot=T)}) #ok
+
+#---- Faith's Phylogenetic Diversity ----
+pd <- lapply(richness, function(df){
+        glm(log(df$PD) ~ plant_pathway_induced,
+                data=df,
+            family=Gamma(link="log"))})
+
+pd.table <- lapply(pd, function(model){
+  car::Anova(model, type="III", test.statistic="LR")#using type III, as its unbalanced
+})
+
+pd.table #both not significant
+
+#check if assumptions are met
+lapply(pd, function(model){simulateResiduals(model, plot=T)}) #ok
+
+#clean-up before you continue
+keep_vars <- c("color_experiment", "color_pathway_induced", "color_stress", "axis_looks")#Values to keep
+rm(list = setdiff(ls(), keep_vars))
+
+
+```
+
+#S5:Alpha-Diversity Fungi
+##Data
+```{r S5; Data}
+
+#ITS full
+load(file = "./Data/phyloseq_objects/ps_ITS_Full.RData")
+ps_ITS
+
+#ITS split by Experiment
+load(file = "./Data/phyloseq_objects/ps_ITS_ByExperiment.RData")
+ITS_exp <- ps_ITS_ByExperiment
+rm(ps_ITS_ByExperiment)
+
+#before calculating alpha diversity, let's scale to the median sequencing depth to normalize the data 
+#to account for differences in library sizes 
+
+pITS_median <- lapply(ITS_exp, function(ps){
+  total <- median(sample_sums(ps))
+  standf <- function(x, t=total) round(t * (x / sum(x)))
+  physeq_msd = transform_sample_counts(ps, standf)
+  print((sample_sums(physeq_msd)))
+  return(physeq_msd)
+})
+
+#check it
+lapply(pITS_median, function(ps){ sample_sums(ps)}) #ok
+
+```
+
+```{r S5; calculate alpha-diversity}
+
+#get Observed, Shannon and Simpson indexes
+richness <- lapply(pITS_median, function(ps){
+  estimate_richness(ps,
+            measures = c("Observed", "Shannon", "Simpson"))
+})
+
+#fix df 
+richness <- lapply(richness, function(df){
+  rownames(df) <- sub("X", "", rownames(df)) #removes X from rownames
+  df$sample_name <- rownames(df) 
+  return(df)
+})
+
+#Get Faith's phylogenetic diversity index
+pd <- lapply(pITS_median, function(ps){
+  pd(t(as.data.frame(ps@otu_table)), ps@phy_tree,include.root=T)
+  })
+
+#merge with metadata of ps object
+richness$cond_phytohormones <- cbind(as.data.frame(sample_data(pITS_median$cond_phytohormones)), richness$cond_phytohormones, pd$cond_phytohormones)
+
+richness$cond_real_insects<- cbind(as.data.frame(sample_data(pITS_median$cond_real_insects)), richness$cond_real_insects, pd$cond_real_insects)
+
+#select the columns needed
+richness <- lapply(richness, function(df){
+  df <- df %>% dplyr::select(c('Experiment',
+                         'plant_pathway_induced',
+                         'Amplicon_concentation_ngul',
+                         'total_reads',
+                         'libsize_after_filtering',
+                         'shoot_biomass',"Observed",
+                         "Shannon", "Simpson", "PD", "sample_name"))
+})
+
+#make another set with long format for plotting
+richness_long <- lapply(richness, function(df){
+  df_long <- reshape2::melt(df)})
+
+
+
+```
+
+##Plot
+```{r S5; Plot}
+
+#Just plot Richness (Observed), Shannon and Faith's PD
+estimates <- c("Observed","Shannon", "PD")
+
+#add info for y axis
+limits <- data.frame(
+  variable = c("Observed","Shannon","PD"),
+  y_min = c(0, 0, 0), # Set your desired minimum y-axis limits
+  y_max = c(200, 4, 40) # Set your desired maximum y-axis limits
+)
+
+#merge
+richness_long_ITS_estimates <- lapply(richness_long, function(df){
+  df <- filter(df, variable %in% estimates)
+  df <- df %>% left_join(limits, by="variable")
+  df$variable <- factor(df$variable, levels=c("Observed","Shannon","PD"))
+  return(df)
+  })
+
+
+#Plot Phytohormone-treated
+p.p <- ggplot(richness_long_ITS_estimates$cond_phytohormones,
+       aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced))+
+     geom_boxplot(aes(fill = plant_pathway_induced))+
+     geom_jitter(data = richness_long_ITS_estimates$cond_phytohormones,
+                 mapping = aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced),
+              shape = 21, size = 1.5, color = "black", alpha=0.5,
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .5))+
+     scale_fill_manual(values=color_stress)+
+  geom_line() +
+  geom_blank(aes(y = y_min)) + # Force the minimum y limit
+  geom_blank(aes(y = y_max)) + # Force the maximum y limit
+  facet_wrap(~ variable, scales = "free_y") +
+  theme(legend.position = "none")+
+    axis_looks
+
+#Plot Herbivore-infested
+p.i <- ggplot(richness_long_ITS_estimates$cond_real_insects,
+       aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced))+
+     geom_boxplot(aes(fill = plant_pathway_induced))+
+     geom_jitter(data = richness_long_ITS_estimates$cond_real_insects,
+                 mapping = aes(x = plant_pathway_induced, y = value, fill=plant_pathway_induced),
+              shape = 21, size = 1.5, color = "black", alpha=0.5,
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .5))+
+     scale_fill_manual(values=color_stress)+
+  geom_line() +
+  geom_blank(aes(y = y_min)) + # Force the minimum y limit
+  geom_blank(aes(y = y_max)) + # Force the maximum y limit
+  facet_wrap(~ variable, scales = "free_y") +
+  theme(legend.position = "none")+
+    axis_looks
+
+#final plot
+p.p / p.i
+
+```
+
+##Stats
+```{r S5; Stats}
+
+#---- Observed/Richness ----
+obs <- lapply(richness, function(df){
+        glm(df$Observed ~ plant_pathway_induced,
+                data=df,
+                family=Gamma(link="log"))})#changed to glm with quasipoisson distribution
+
+obs.table <- lapply(obs, function(model){
+  car::Anova(model, type="III", test.statistic="F")#using type III, as its unbalanced
+})
+
+#check if assumptions are met
+lapply(obs, function(model){simulateResiduals(model, plot=T)}) #ok
+
+#posthoc
+obs.emmeans <- lapply(obs, function(model){
+              x <- emmeans(model, pairwise ~  plant_pathway_induced)
+              x <- multcomp::cld(x, adjust="sidak", Letters=letters)
+              return(x)})
+
+#---- Shannon ----
+shann <- lapply(richness, function(df){
+          lm(log(df$Shannon) ~ plant_pathway_induced,
+                data=df)})
+
+shann.table <- lapply(shann, function(model){
+  car::Anova(model, type="III", test.statistic="F")#using type III, as its unbalanced
+})
+
+shann.table #both not significant
+
+#check if assumptions are met
+lapply(shann, function(model){simulateResiduals(model, plot=T)}) #ok
+
+
+#---- Faith's Phylogenetic Diversity ----
+pd <- lapply(richness, function(df){
+        glm(log(df$PD) ~ plant_pathway_induced,
+                data=df,
+            family=Gamma(link="log"))})
+
+pd.table <- lapply(pd, function(model){
+  car::Anova(model, type="III", test.statistic="LR")#using type III, as its unbalanced
+})
+
+pd.table #both signigicant
+
+#check if assumptions are met
+lapply(pd, function(model){simulateResiduals(model, plot=T)}) #ok
+
+#posthoc
+pd.emmeans <- lapply(obs, function(model){
+              x <- emmeans(model, pairwise ~  plant_pathway_induced)
+              x <- multcomp::cld(x, adjust="sidak", Letters=letters)
+              return(x)})
+
+#clean-up before continuing to S6
+keep_vars <- c("color_experiment", "color_pathway_induced", "color_stress", "axis_looks")#Values to keep
+rm(list = setdiff(ls(), keep_vars))
+
+
+```
+
+
+#S6:Individual GLS levels 
+##Data
+```{r S6; Data}
+
+#load data
+gluco <- readRDS("./Data/plant_data/glucosinolates.rds")
+str(gluco)
+
+#change levels of Experiment
+levels(gluco$Experiment)
+gluco <- gluco %>%
+                mutate(Experiment = factor(Experiment,
+                                           levels = c("simulated", "real_insects" )))%>%
+                mutate(plant_pathway_induced = factor(plant_pathway_induced,
+                                                      levels=c("Control", "JA", "SA")))
+#remove sample
+gluco <-gluco %>%
+        subset(ID != "159")%>% #dry sample, no info
+        droplevels()
+
+#### classify by Indolic or Aliphatic ####
+indolic <- c("Glu_4OHI3M", "Glu_I3M", "Glu_1MOI3M", "Glu_4MOI3M") 
+aliphatic <- c("Glu_Allyl", "Glu_3MSOP","Glu_4MSOB")
+#make a small df
+values <- c(indolic, aliphatic)
+#Create a vector of names, repeating the vector names accordingly
+names <- c(rep("indolic", length(indolic)), rep("aliphatic", length(aliphatic)))
+# Create the data frame
+key_glucosinolates <- data.frame(type = names, glucosinolate = values)
+#clean
+rm(values,names)
+#### ####
+
+gluco <- gluco %>%
+          relocate(Glu_Allyl,Glu_3MSOP,Glu_4MSOB, .after=weight_mg) %>% 
+          relocate(Glu_4OHI3M,Glu_I3M,Glu_1MOI3M, Glu_4MOI3M, .after=Glu_4MSOB)%>% 
+          mutate(Glu_alyphatic=rowSums(.[11:13]))%>%
+          mutate(Glu_indolic=rowSums(.[14:17]))
+
+
+#make long format for plotting
+long <- gluco %>% 
+              tidyr::pivot_longer(cols = c(11:20), 
+              names_to = "glucosinolate",
+              values_to = "concentration",
+              values_drop_na = TRUE)
+
+#making new phytohormone column as factor
+long$glucosinolate <- as.factor(long$glucosinolate)
+
+#subset to feedback phase & keep only indolic and alyphatic for now 
+feedback_long <- long %>% 
+                 filter(glucosinolate %in% c("Glu_alyphatic","Glu_indolic")&
+                 Phase == "feedback"&
+                 soil_inocula != "non-conditioned")
+
+levels(feedback_long$herbivory) #wrongly named
+#change names of herbivory
+feedback_long <- feedback_long %>% 
+                 mutate(herbivory=case_when(
+                   herbivory == "MeJA" ~ "caterpillar",
+                   herbivory == "SA" ~ "aphid",
+                   herbivory == "mock" ~ "not_infested",
+                   herbivory == "without" ~ "not_infested",
+                   TRUE ~ herbivory))
+#make it a factor
+feedback_long$herbivory <- factor(feedback_long$herbivory, levels=c("not_infested", "caterpillar", "aphid"))
+
+#finally, delete not informative columns
+feedback_long <- feedback_long %>% dplyr::select(-Stress, -plant_pathway_induced, -Glucosinolates, -treatment)%>%
+                 relocate(soil_inocula, .after=Experiment)
+
+#Now make a summary df
+df_feedback_summ <- feedback_long  %>% 
+                    group_by(Experiment, soil_inocula, herbivory, glucosinolate) %>%
+                    summarise(
+                    n = n(),
+                    mean = mean(concentration, na.rm = TRUE),
+                    sd = sd(concentration, na.rm = TRUE)) %>%
+                    mutate(se = sd/sqrt(n))
+```
+
+##Plot
+```{r S6; Plot}
+
+#Phytohormone-treated
+#plot by type of GLS
+aliphatic <- ggplot(data = subset(df_feedback_summ, Experiment == "simulated" & glucosinolate == "Glu_alyphatic"),
+       mapping = aes(x = glucosinolate, y = mean), colour= soil_inocula)+
+  geom_bar(aes(fill = soil_inocula), stat = "identity",
+           position = position_dodge(0.8), width = 0.8, color = "black")+
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se, group = soil_inocula),
+                width = 0.2, position = position_dodge(0.8))+
+  geom_jitter(data = subset(feedback_long, Experiment == "simulated" & glucosinolate == "Glu_alyphatic"),
+              mapping = (aes(glucosinolate, concentration,
+                             fill = soil_inocula)),
+              shape = 21, size = 1.5, alpha = 0.8, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,30)+
+  theme(legend.position="none")+
+  facet_wrap(~herbivory)+
+  theme(panel.spacing = unit(0, "lines"))
+
+indolic <- ggplot(data = subset(df_feedback_summ, Experiment == "simulated" & glucosinolate == "Glu_indolic"),
+       mapping = aes(x = glucosinolate, y = mean), colour= soil_inocula)+
+  geom_bar(aes(fill = soil_inocula), stat = "identity",
+           position = position_dodge(0.8), width = 0.8, color = "black")+
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se, group = soil_inocula),
+                width = 0.2, position = position_dodge(0.8))+
+  geom_jitter(data = subset(feedback_long, Experiment == "simulated" & glucosinolate == "Glu_indolic"),
+              mapping = (aes(glucosinolate, concentration,
+                             fill = soil_inocula)),
+              shape = 21, size = 1.5, alpha = 0.8, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,60)+
+  theme(legend.position="none")+
+  facet_wrap(~herbivory)+
+  theme(panel.spacing = unit(0, "lines"))
+
+combined_plot.p <- aliphatic / indolic
+combined_plot.p 
+
+#Herbivore-infested
+aliphatic_i <- ggplot(data = subset(df_feedback_summ, Experiment == "real_insects" & glucosinolate == "Glu_alyphatic"),
+       mapping = aes(x = glucosinolate, y = mean), colour= soil_inocula)+
+  geom_bar(aes(fill = soil_inocula), stat = "identity",
+           position = position_dodge(0.8), width = 0.7, color = "black")+
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se, group = soil_inocula),
+                width = 0.2, position = position_dodge(0.8))+
+  geom_jitter(data = subset(feedback_long, Experiment == "real_insects" & glucosinolate == "Glu_alyphatic"),
+              mapping = (aes(glucosinolate, concentration,
+                             fill = soil_inocula)),
+              shape = 21, size = 1.5, alpha = 0.8, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,30)+
+  theme(legend.position="none")+
+  facet_wrap(~herbivory)+
+  theme(panel.spacing = unit(0, "lines"))
+
+indolic_i <- ggplot(data = subset(df_feedback_summ, Experiment == "real_insects" & glucosinolate == "Glu_indolic"),
+       mapping = aes(x = glucosinolate, y = mean), colour= soil_inocula)+
+  geom_bar(aes(fill = soil_inocula), stat = "identity",
+           position = position_dodge(0.8), width = 0.7, color = "black")+
+  geom_errorbar(aes(ymin = mean-se, ymax = mean+se, group = soil_inocula),
+                width = 0.2, position = position_dodge(0.8))+
+  geom_jitter(data = subset(feedback_long, Experiment == "real_insects" & glucosinolate == "Glu_indolic"),
+              mapping = (aes(glucosinolate, concentration,
+                             fill = soil_inocula)),
+              shape = 21, size = 1.5, alpha = 0.8, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+  scale_fill_manual(values = color_pathway_induced)+
+  axis_looks+
+  ylim(0,60)+
+  theme(legend.position="none")+
+  facet_wrap(~herbivory)+
+  theme(panel.spacing = unit(0, "lines"))
+
+# Combine the two plots
+combined_plot_i <- aliphatic_i / indolic_i
+combined_plot_i
+
+```
+
+##Stats
+Let's analyze the GLS by type independently in each experiment 
+
+First for phyto
+```{r S6; Stats}
+
+#---- Phyto-Alyphatic ----
+phyto <- subset(feedback_long, Experiment == "simulated" & glucosinolate == "Glu_alyphatic")
+phyto %>% group_by(Experiment,soil_inocula,herbivory) %>% summarise(n=n()) #balanced
+
+lm.p.a <- glm(log(concentration) ~ soil_inocula*herbivory,
+              family=gaussian,
+            data=phyto)
+
+lm.p.a_table <- car::Anova(lm.p.a, type="II", test.statistic="LR")
+simulateResiduals(lm.p.a, plot=T) #ok
+
+#pairiwse differences
+emmeans_herb <- emmeans(lm.p.a, pairwise~herbivory) #differences between NI and caterpillar
+cld(emmeans_herb$emmeans, adjust="FDR")
+
+#---- Phyto-Indolic ----
+phyto_i <- subset(feedback_long, Experiment == "simulated" & glucosinolate == "Glu_indolic")
+phyto_i %>% group_by(Experiment,soil_inocula,herbivory) %>% summarise(n=n()) #balanced
+
+lm.p.i <- glm(log(concentration) ~ soil_inocula*herbivory,
+              family=gaussian,
+         data=phyto_i)
+
+lm.p.i_table <- car::Anova(lm.p.i, type="II", test.statistic="LR")
+simulateResiduals(lm.p.i, plot=T) #ok
+
+#pairiwse differences
+emmeans(lm.p.i, pairwise~soil_inocula) #differences between Ctrl and SA
+emmeans(lm.p.i, pairwise~herbivory) #differences between non-infested and caterpillars
+
+#---- Insects-Alyphatic ----
+insects <- subset(feedback_long, Experiment == "real_insects" & glucosinolate == "Glu_alyphatic")
+insects %>% group_by(Experiment,soil_inocula,herbivory) %>% summarise(n=n()) #balanced
+
+lm.i.a <- glm(log(concentration) ~ soil_inocula*herbivory,
+              family=gaussian,
+              data=insects)
+
+lm.i.a_table <- car::Anova(lm.i.a, type="II", test.statistic="LR")
+simulateResiduals(lm.i.a, plot=T) #ok
+
+#pairiwse differences
+emmeans(lm.i.a, pairwise~soil_inocula) #differences between CTR and JA and SA
+emmeans(lm.i.a, pairwise~herbivory) #differences between non-infested and caterpillars
+
+#---- Insects-Indolic ----
+insects_i <- subset(feedback_long, Experiment == "real_insects" & glucosinolate == "Glu_indolic")
+insects_i %>% group_by(Experiment,soil_inocula,herbivory) %>% summarise(n=n()) #balanced
+
+lm.i.i <- glm(log(concentration) ~ soil_inocula*herbivory,
+              family=gaussian,
+              data=insects_i)
+
+lm.i.i_table <- car::Anova(lm.i.i, type="II", test.statistic="LR")
+simulateResiduals(lm.i.i, plot=T) #ok
+
+#pairiwse differences
+emmeans(lm.i.i, pairwise~herbivory) #differences non-infested and caterpillars
+
+```
+
+Finished! :)
