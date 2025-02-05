@@ -1,0 +1,306 @@
+---
+title: "Figure 5: PSF responses to low aphid density"
+author: "Marcela Aragon"
+date: "2025-02-04"
+output: html_document
+---
+
+#General settings 
+
+## Loading libraries
+```{r loading packages}
+
+#Set working directory to project directory 
+setwd("./")
+getwd() #ok
+
+#data
+library(dplyr)
+library(readxl)
+
+#plotting
+library(ggplot2)
+
+#analysis
+library(lme4)
+library(Matrix)
+library(plotrix) #stderror
+library(emmeans)
+
+```
+
+##Settings for plots
+```{r settings plots}
+theme_set(theme_bw())
+color_stress <- c("#BFBFBF", "#319B67")
+
+# Set default axis looks
+axis_looks <- theme(axis.text.x = element_text(colour = "black", size = 9,
+                                               face = "bold", angle=0, hjust=0.5))+ #text in X
+  theme(axis.text.y = element_text(colour = "black", size = 9, face = "bold"))+ #text in y
+  theme(axis.title=element_text(size=11, face = "bold"))+ #all texts
+  theme(axis.title.y = element_text(margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0)))+
+  theme(panel.grid.major = element_blank(), #no grid
+        panel.grid.minor = element_blank()) #no grid
+```
+
+#(a)Time spent in pathway phase 
+##Data
+
+```{r Pathway; Data}
+
+#EPG timebins; measurements per wavename per hour per plant
+time <- readRDS("./Data/EPG_data/EPG_time.rds")
+head(time) 
+str(time)
+
+#check levels
+levels(time$wavename) #name of probing behavior
+levels(time$group) #treatments
+levels(time$id_rec) #rep number 
+levels(time$wave) #same as wavename but with number
+levels(time$hour) #hours recording
+
+#make a summary df only selecting for phloem feeding and pathway 
+summary <- time %>%  
+           filter(wavename %in% c("phloem feeding", "pathway", "xylem ingestion")) %>% 
+           group_by(wavename, hour, group) %>%
+           summarise(mean_time=mean(perc),
+                     sd=sd(perc),
+                     se=std.error(perc)) #from plotrix::std.error()
+
+#Here you can find the summary data from Table S7
+EPG_table <- readRDS("./Data/EPG_data/EPG_table.rds")
+
+#And here you can find the total EPG measurements per plant. 
+EPG_variables <- readRDS("./Data/EPG_data/EPG_variables.rds")
+
+#We are only going to analyze the 'time' df. 
+
+```
+
+##Plot
+```{r Pathway; Plot}
+
+#Time spent on Pathway
+riv_pathway <- ggplot(subset(summary, wavename == "pathway"),
+                   aes(x=hour, y=mean_time, color=group, group=group))+
+         geom_line(stat="identity", linewidth=0.9)+
+         geom_point(size=3)+
+          geom_ribbon(aes(ymin = mean_time - se, ymax = mean_time + se, fill = group), # Shaded error area
+              alpha = 0.2, color = NA) + 
+         scale_color_manual(values= c("#BFBFBF", "#319B67"))+
+         scale_fill_manual(values= c("#BFBFBF", "#319B67"))+
+         ylim(0,80)+
+         axis_looks+
+        theme(legend.position="none")+
+         labs(y="Time in pathway (%)", x="Time (h)")
+
+riv_pathway 
+
+```
+
+##Stats
+
+```{r Pathway; Stats}
+
+#Pathway time ====
+pathway <- time %>% filter(wavename == "pathway") %>% as.data.frame()
+pathway %>% group_by(group) %>% summarise(n=n()) #not balanced
+str(pathway)
+
+#run the model
+pathway.poss <- glmer(perc ~ group*hour + (1|id_rec), 
+               family = poisson, 
+               data = pathway)
+
+#glmer result
+car::Anova(pathway.poss, type="III", test.statistic="Chisq")
+
+#checking assumptions
+residuals_lme <- residuals(pathway.poss)
+plot(residuals_lme) #ok
+qqnorm(residuals_lme) #ok
+qqline(residuals_lme, col = "red") #ok
+hist(residuals_lme, breaks = 20, main = "Histogram of Residuals") #ok
+
+#post-hoc
+emmeans(pathway.poss, pairwise ~ group | hour,
+                  adjust="FDR") 
+
+```
+
+
+
+#(b)Time spent phloem feeding
+##Data
+```{r Phloem; data}
+
+#You need and remember to re-load packages
+summary
+time 
+
+#make a df only for phloem-feeding
+phloem <- time %>% filter(wavename == "phloem feeding") %>% as.data.frame()
+phloem %>% group_by(group) %>% summarise(n=n()) #not balanced
+str(phloem)
+
+```
+
+##Plot
+
+```{r Phloem; Plot}
+
+riv_phloem <- ggplot(subset(summary, wavename == "phloem feeding"),
+                   aes(x=hour, y=mean_time, color=group, group=group))+
+         geom_line(stat="identity", linewidth=0.9)+
+         geom_point(size=3)+
+          geom_ribbon(aes(ymin = mean_time - se, ymax = mean_time + se, fill = group), # Shaded error area
+              alpha = 0.2, color = NA) + 
+         scale_color_manual(values= c("#BFBFBF", "#319B67"))+
+         scale_fill_manual(values= c("#BFBFBF", "#319B67"))+
+         ylim(0,80)+
+         axis_looks+
+        theme(legend.position="none")+
+         labs(y="Time phloem feeding (%)", x="Time (h)")
+
+riv_phloem
+
+
+```
+
+
+##Stats
+```{r Phloem; Stats}
+#run the model
+phloem.poss <- glmer(perc ~ group*hour + (1|id_rec), 
+               family = poisson, 
+               data = phloem)
+
+#glmer result
+car::Anova(phloem.poss, type="III", test.statistic="Chisq")
+
+#checking assumptions
+residuals_lme <- residuals(phloem.poss)
+plot(residuals_lme) #ok
+qqnorm(residuals_lme) #ok
+qqline(residuals_lme, col = "red") #ok
+hist(residuals_lme, breaks = 20, main = "Histogram of Residuals") #ok
+
+#post-hoc
+emmeans(phloem.poss, pairwise ~ group | hour,
+                  adjust="FDR") 
+
+
+```
+
+
+#(c)Number of aphids 14 dpi
+##Data
+```{r Number of aphids; Data}
+
+#load data 
+aphid <- readRDS("./Data/plant_data/aphids_low_density.rds")
+str(aphid) #ok
+
+```
+
+##Plot
+```{r Number of aphids; Plot}
+
+# Rivera ====
+riv_aphids <- ggplot(subset(aphid, Soil_species == "Riv"),
+                   aes(x=Soil_stress, y=aphids_14dpi, fill=Soil_stress))+
+         geom_boxplot(mapping = aes(fill= Soil_stress),
+                      position = position_dodge(width = 0.8), lwd=0.8)+
+         geom_jitter(subset(aphid, Soil_species == "Riv"),
+              mapping = (aes(x=Soil_stress, y=aphids_14dpi, fill = Soil_stress)),
+              shape = 21, size = 1.9, alpha=0.9, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+         scale_fill_manual(values= c("#BFBFBF", "#319B67"))+
+         scale_x_discrete(labels=c("Ctr" = "Control-inocula", "SA" = "SA-inocula"))+
+  ylim(0,60)+
+         axis_looks+
+  theme(legend.position="none")+
+  labs(y="Number of M. persicae aphids 14dpi", x="")
+
+riv_aphids
+
+
+```
+
+##Stats
+```{r Number of aphids; Stats}
+
+#check data
+aphid
+aphid %>% group_by(Soil_stress) %>% summarise(n=n()) 
+
+#run model 
+glm <- glm(aphids_14dpi ~ Soil_stress,
+              family=Gamma(link="log"),
+              data=aphid)
+
+#check
+library(DHARMa)
+simulateResiduals(glm, plot=T) #ok
+
+#get summary
+number_glm <- car::Anova(glm, type="III", test.statistic="LR")
+
+
+```
+
+#(d)Plant Biomass
+##Data
+
+```{r Plant Biomass; Data}
+
+#load plant biomass data 
+biomass <- readRDS("./Data/plant_data/biomass_low_density.rds")
+str(biomass)
+
+```
+
+##Plot
+```{r Plant Biomass; Plot}
+
+# Rivera ====
+riv_shoot <- ggplot(subset(plant, Soil_species == "Bole_Riv"),
+                   aes(x=Soil_stress, y=`Shoot weight (mg)`, fill=Soil_stress))+
+         geom_boxplot(mapping = aes(fill= Soil_stress),
+                      position = position_dodge(width = 0.8), lwd=0.8)+
+         geom_jitter(subset(plant, Soil_species == "Bole_Riv"),
+              mapping = (aes(x=Soil_stress, y=`Shoot weight (mg)`, fill = Soil_stress)),
+              shape = 21, size = 1.9, alpha=0.9, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+         scale_fill_manual(values= c("#BFBFBF", "#319B67"))+
+         scale_x_discrete(labels=c("Ctr" = "Control-inocula", "SA" = "SA-inocula"))+
+  ylim(0,650)+
+         axis_looks+
+  theme(legend.position="none")+
+  labs(y="Shoot biomass (mg)", x="")
+
+riv_shoot
+
+
+```
+
+##Stats
+```{r Plant Biomass; Stats}
+
+biomass
+
+#run lm
+lm <- glm(`Plant weight` ~ Soil_stress, 
+          family=gaussian,
+          data=biomass)
+
+#check
+simulateResiduals(lm, plot=T) #ok
+
+#get summary
+biomass_table <- car::Anova(lm, type="III", test.statistic="LR")
+
+```
+
