@@ -55,9 +55,6 @@ variables <- readRDS("./Data/EPG_data/EPG_variables.rds")
 variables$group #ok
 variables$sum.c #total duration in pathway (c)
 
-#Here you can find the summary data from Table S7
-EPG_table <- readRDS("./Data/EPG_data/EPG_table.rds")
-
 ```
 
 ##Plot
@@ -86,8 +83,10 @@ riv_pathway
 ##Stats
 ```{r}
 
-#summary with stats already calculated following Kloth et al (2020) script. 
-EPG_table
+#summary with stats already calculated following Kloth et al (2020) script. [Table S7]
+EPG_table <- readRDS("./Data/EPG_data/EPG_table.rds")
+
+EPG_table[6,] #result for Total duration pathway
 
 ```
 
