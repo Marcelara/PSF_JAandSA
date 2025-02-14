@@ -44,9 +44,56 @@ axis_looks <- theme(axis.text.x = element_text(colour = "black", size = 9,
         panel.grid.minor = element_blank()) #no grid
 ```
 
-#(a)Time spent in pathway phase 
-##Data
 
+#(a) Total duration pathway phase
+##Data
+```{r}
+#Variables
+variables <- readRDS("./Data/EPG_data/EPG_variables.rds")
+
+#check levels
+variables$group #ok
+variables$sum.c #total duration in pathway (c)
+
+#Here you can find the summary data from Table S7
+EPG_table <- readRDS("./Data/EPG_data/EPG_table.rds")
+
+```
+
+##Plot
+```{r Pathway; Plot}
+
+riv_pathway <- ggplot(variables,
+                   aes(x=group, y=sum.c, fill=group))+
+         geom_boxplot(mapping = aes(fill= group),
+                      position = position_dodge(width = 0.8), lwd=0.8)+
+         geom_jitter(aes(x=group, y=sum.c, fill=group),
+              shape = 21, size = 1.9, alpha=0.9, color = "black",
+              position = position_jitterdodge(jitter.height = .1, jitter.width = .2))+
+         scale_fill_manual(values= c("#BFBFBF", "#319B67"))+
+         scale_x_discrete(labels=c("Riv_Ctr" = "Control-inocula", "Riv_SA" = "SA-inocula"))+
+         axis_looks+
+  ylim(0,450)+
+  theme(legend.position="none")+
+  labs(y="Total time in pathway (min)", x="")
+
+
+riv_pathway 
+
+
+```
+
+##Stats
+```{r}
+
+#summary with stats already calculated following Kloth et al (2020) script. 
+EPG_table
+
+```
+
+
+Time spent in pathway phase [not included]
+Data
 ```{r Pathway; Data}
 
 #EPG timebins; measurements per wavename per hour per plant
@@ -69,8 +116,7 @@ summary <- time %>%
                      sd=sd(perc),
                      se=std.error(perc)) #from plotrix::std.error()
 
-#Here you can find the summary data from Table S7
-EPG_table <- readRDS("./Data/EPG_data/EPG_table.rds")
+
 
 #And here you can find the total EPG measurements per plant. 
 EPG_variables <- readRDS("./Data/EPG_data/EPG_variables.rds")
@@ -79,7 +125,7 @@ EPG_variables <- readRDS("./Data/EPG_data/EPG_variables.rds")
 
 ```
 
-##Plot
+Plot
 ```{r Pathway; Plot}
 
 #Time spent on Pathway
@@ -100,8 +146,7 @@ riv_pathway
 
 ```
 
-##Stats
-
+Stats
 ```{r Pathway; Stats}
 
 #Pathway time ====
@@ -129,8 +174,6 @@ emmeans(pathway.poss, pairwise ~ group | hour,
                   adjust="FDR") 
 
 ```
-
-
 
 #(b)Time spent phloem feeding
 ##Data
