@@ -55,6 +55,9 @@ variables <- readRDS("./Data/EPG_data/EPG_variables.rds")
 variables$group #ok
 variables$sum.c #total duration in pathway (c)
 
+#Check reps
+table(variables$group)
+
 ```
 
 ##Plot
@@ -245,6 +248,9 @@ emmeans(phloem.poss, pairwise ~ group | hour,
 aphid <- readRDS("./Data/plant_data/aphids_low_density.rds")
 str(aphid) #ok
 
+#number of reps
+table(aphid$Soil_stress)
+
 ```
 
 ##Plot
@@ -301,6 +307,8 @@ number_glm <- car::Anova(glm, type="III", test.statistic="LR")
 #load plant biomass data 
 biomass <- readRDS("./Data/plant_data/biomass_low_density.rds")
 str(biomass)
+
+table(biomass$Soil_stress)
 
 ```
 
