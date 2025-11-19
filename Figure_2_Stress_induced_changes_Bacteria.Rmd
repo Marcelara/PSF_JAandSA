@@ -617,6 +617,10 @@ insects_dataDA
 p <- rownames(phyto_dataDA$ps@tax_table)
 i <- rownames(insects_dataDA$ps@tax_table)
 
+#save ASV vector
+da_asvs <- list(phytohormones=p, insects=i)
+saveRDS(da_asvs, "./R_results/Fig_2_Stress_induced_changes_Bacteria/da_asvs.rds")
+
 intersect(p,i) #no
 asvs <- c(p,i)
 asvs <- unique(asvs) #44
@@ -697,8 +701,16 @@ lfc_insects <- insects_dataDA$lfc %>%  mutate(Insects= "insects")
 lfc_insects <- lfc_insects[,c(1,3:5)]
 colnames(lfc_insects) <- c("id", "lfc_JA_insects", "lfc_SA_insects", "Insects")  
 
+#let's save also the lfc of only those DA
+lfc_phyto_sel <- lfc_phyto %>% filter(id %in% p)
+lfc_insect_sel <- lfc_insects %>% filter(id %in% i)
+
+#save LFC
+lfc_da_avs <- list(phytohormones=lfc_phyto_sel, insects=lfc_insect_sel)
+saveRDS(lfc_da_avs, "./R_results/Fig_2_Stress_induced_changes_Bacteria/lfc_da_avs.rds")
+
 #merge
-df_lfc <- full_join(lfc_phyto, lfc_insects)
+df_lfc <- full_join(lfc_phyto_sel, lfc_insect_sel)
 
 #Next, let's get D3:Treatment
 #phyto
@@ -728,7 +740,7 @@ bin_insects <- bin_insects %>%
                   DA_JA_insects == "YES" & DA_SA_insects == "YES" ~ "JA_and_SA")) #works
   
 #merge
-binary_stress <- full_join(bin_phyto, bin_insects)
+binary_stress <- full_join(bin_phyto, bin_insects) #44
 
 #merge to make it complete
 df_complete <- full_join(df_lfc, binary_stress)
@@ -750,6 +762,9 @@ tax_table$id <- rownames(tax_table) #add id column for join
 
 #merge
 df_complete2 <- left_join(df_complete, tax_table)
+
+#save df
+saveRDS(df_complete2, "./R_results/Fig_2_Stress_induced_changes_Bacteria/df_complete2.rds")
 
 ```
 
